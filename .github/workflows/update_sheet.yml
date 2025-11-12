@@ -1,9 +1,9 @@
-name: Update live_data.csv from Google Sheets
+name: Update live_data.csv from Google Sheets Sensor data
 
 on:
   schedule:
     - cron: "0 * * * *"   # every 1 hour (UTC)
-  workflow_dispatch:       # allows manual trigger
+  workflow_dispatch:       # allows manual trigger also
 
 env:
   # Git user used to create commits
