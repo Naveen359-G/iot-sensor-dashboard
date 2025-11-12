@@ -4,13 +4,13 @@ Version 4 — Multi-device monitoring + per-device charts + GitHub comment updat
 Requirements:
  - python packages: pandas, gspread, google-auth, matplotlib, requests
  - service account JSON at SERVICE_ACCOUNT_FILE
- - Environment variables:
-     GOOGLE_SHEET_ID       (your Google Sheet ID)
-     TELEGRAM_BOT_TOKEN    (Telegram bot token)
-     TELEGRAM_CHAT_ID      (Telegram chat ID)
-     GITHUB_REPOSITORY     (owner/repo)
-     ISSUE_NUMBER          (issue number to post/update; default "1")
-     GITHUB_TOKEN          (personal access token or workflow token)
+ - Environment variables (recommended):
+     GOOGLE_SHEET_ID
+     TELEGRAM_BOT_TOKEN
+     TELEGRAM_CHAT_ID
+     GITHUB_REPOSITORY (owner/repo)
+     ISSUE_NUMBER (issue to post/update; default "1")
+     GITHUB_TOKEN
 """
 
 import os
@@ -26,7 +26,7 @@ import requests
 # ========================
 # CONFIGURATION
 # ========================
-SERVICE_ACCOUNT_FILE = "service_account.json"   # path to Google service account JSON
+SERVICE_ACCOUNT_FILE = "service_account.json"   # path to Google service account file
 SHEET_NAME = "Week 39/52"
 START_ROW = 72
 REMOVE_COLUMN = "eCO₂ (ppm)"
@@ -36,21 +36,18 @@ ALERT_TEMP = 30.0                 # °C
 ALERT_AQI = 600.0                 # AQI threshold (>= triggers alert)
 
 # GitHub settings (from env)
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")      # e.g. "Naveen359-G/iot-sensor-dashboard"
 ISSUE_NUMBER = os.getenv("ISSUE_NUMBER", "1")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
-# Telegram (from env)
+# Telegram alerts (from env)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Google Sheet ID (from env)
-SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+# Where to store images in repo (path inside repo)
+GITHUB_ASSETS_PATH = "assets/iot_dashboards"      # will create/update files here
 
-# Assets path
-GITHUB_ASSETS_PATH = "assets/iot_dashboards"
-
-# Marker for GitHub comment
+# Marker for the comment so we can find & update it
 MARKER = "<!-- IoT_SENSOR_DASHBOARD -->"
 
 # ========================
@@ -64,7 +61,6 @@ gc = gspread.authorize(creds)
 # HELPER FUNCTIONS
 # ========================
 def colorize_indicator(value, threshold, unit=""):
-    """Return emoji + bold text for markdown based on thresholds."""
     try:
         val = float(value)
     except Exception:
@@ -91,40 +87,22 @@ def generate_alert_text(temp, aqi):
         pass
     return " | ".join(alerts) if alerts else "✅ Normal"
 
-def send_telegram_alert(message: str):
-    """
-    Send a Telegram message via bot if credentials are provided.
-    """
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram bot token or chat ID not set. Skipping Telegram alert.")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        r = requests.post(url, json=payload)
-        if r.status_code == 200:
-            print("✅ Telegram alert sent successfully.")
-        else:
-            print(f"⚠️ Telegram alert failed ({r.status_code}): {r.text}")
-    except Exception as e:
-        print(f"⚠️ Telegram alert exception: {e}")
-
 def gh_headers(token):
     return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
 
 def gh_upload_file(repo, path_in_repo, content_bytes, token, commit_message="Add asset"):
-    """Upload or update file to GitHub repo via Contents API"""
     api_url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
     headers = gh_headers(token)
 
-    # check existing file to get sha
+    # Check if file already exists
     get_resp = requests.get(api_url, headers=headers)
     data = {
         "message": commit_message,
         "content": base64.b64encode(content_bytes).decode("utf-8"),
     }
     if get_resp.status_code == 200:
-        sha = get_resp.json().get("sha")
+        get_json = get_resp.json()
+        sha = get_json.get("sha")
         data["sha"] = sha
 
     put_resp = requests.put(api_url, headers=headers, json=data)
@@ -137,13 +115,13 @@ def gh_upload_file(repo, path_in_repo, content_bytes, token, commit_message="Add
         return None
 
 def find_existing_dashboard_comment(repo, issue_number, token):
-    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-    r = requests.get(url, headers=gh_headers(token))
+    base_comments_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+    r = requests.get(base_comments_url, headers=gh_headers(token))
     if r.status_code != 200:
         print(f"⚠️ Failed to list issue comments ({r.status_code}): {r.text}")
         return None
     for comment in r.json():
-        if MARKER in comment.get("body", ""):
+        if MARKER in (comment.get("body") or ""):
             return comment.get("id")
     return None
 
@@ -152,25 +130,53 @@ def update_or_create_issue_comment(repo, issue_number, token, body_md):
     if comment_id:
         patch_url = f"https://api.github.com/repos/{repo}/issues/comments/{comment_id}"
         r = requests.patch(patch_url, headers=gh_headers(token), json={"body": body_md})
-        return r.status_code == 200
+        if r.status_code == 200:
+            print("🔄 Updated existing GitHub dashboard comment successfully.")
+            return True
+        else:
+            print(f"⚠️ Failed to update comment ({r.status_code}): {r.text}")
+            return False
     else:
         post_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
         r = requests.post(post_url, headers=gh_headers(token), json={"body": body_md})
-        return r.status_code == 201
+        if r.status_code == 201:
+            print("💬 Created new dashboard comment on GitHub.")
+            return True
+        else:
+            print(f"⚠️ Failed to create comment ({r.status_code}): {r.text}")
+            return False
+
+# ========================
+# TELEGRAM ALERT FUNCTION
+# ========================
+def send_telegram_alert(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, data=payload)
+    except Exception as e:
+        print(f"⚠️ Telegram alert failed: {e}")
 
 # ========================
 # LOAD SHEET DATA
 # ========================
-sheet = gc.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
+sheet = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"]).worksheet(SHEET_NAME)
 rows = sheet.get_all_records()
 df = pd.DataFrame(rows)
+
+# ========================
+# NORMALIZE COLUMN NAMES
+# ========================
+df.columns = [c.strip().replace(" ", "_").replace("(", "").replace(")", "") for c in df.columns]
 
 # ========================
 # CLEAN & FILTER
 # ========================
 filtered_df = df.iloc[START_ROW - 2:].copy()
-if REMOVE_COLUMN in filtered_df.columns:
-    filtered_df.drop(columns=[REMOVE_COLUMN], inplace=True)
+if REMOVE_COLUMN.replace(" ", "_").replace("(", "").replace(")", "") in filtered_df.columns:
+    filtered_df.drop(columns=[REMOVE_COLUMN.replace(" ", "_").replace("(", "").replace(")", "")], inplace=True)
 
 if "Timestamp" in filtered_df.columns:
     filtered_df = filtered_df.sort_values(by="Timestamp", ascending=False).reset_index(drop=True)
@@ -178,14 +184,14 @@ if "Timestamp" in filtered_df.columns:
 filtered_df["Last_Updated_UTC"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 def compute_alert_row(r):
-    return generate_alert_text(r.get("Temperature (°C)"), r.get("AQI Value"))
+    return generate_alert_text(r.get("Temperature_°C"), r.get("AQI_Value"))
 
 filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
 
-if "Device ID" not in filtered_df.columns:
-    raise RuntimeError("Sheet does not contain 'Device ID' column — cannot group per device.")
+if "Device_ID" not in filtered_df.columns:
+    raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
 
-device_groups = filtered_df.groupby("Device ID")
+device_groups = filtered_df.groupby("Device_ID")
 summary_rows = []
 markdown_device_sections = []
 
@@ -193,19 +199,19 @@ os.makedirs("assets_local", exist_ok=True)
 
 for device, device_df in device_groups:
     device_df = device_df.head(MAX_RECORDS).copy()
+
     csv_name = f"live_data_{device}.csv"
     device_df.to_csv(csv_name, index=False)
+    print(f"✅ Saved {csv_name} ({len(device_df)} records)")
 
     latest = device_df.iloc[0]
-
-    last_n = device_df.head(10)[["Temperature (°C)", "AQI Value"]].copy()
-    last_n = last_n[::-1]
+    last_n = device_df.head(10)[["Temperature_°C", "AQI_Value"]].copy()[::-1]
 
     plt.figure(figsize=(6, 3))
-    if "Temperature (°C)" in last_n.columns:
-        plt.plot(last_n["Temperature (°C)"].values, marker="o", label="Temperature (°C)")
-    if "AQI Value" in last_n.columns:
-        plt.plot(last_n["AQI Value"].values, marker="s", label="AQI Value")
+    if "Temperature_°C" in last_n.columns:
+        plt.plot(last_n["Temperature_°C"].values, marker="o", label="Temperature (°C)")
+    if "AQI_Value" in last_n.columns:
+        plt.plot(last_n["AQI_Value"].values, marker="s", label="AQI Value")
     plt.title(f"{device} - Recent Trends (Last {len(last_n)} Readings)")
     plt.xlabel("Reading Index (older → newer)")
     plt.grid(True, alpha=0.3)
@@ -215,6 +221,7 @@ for device, device_df in device_groups:
     chart_local_path = os.path.join("assets_local", f"sensor_trends_{device}.png")
     plt.savefig(chart_local_path)
     plt.close()
+    print(f"📈 Chart saved locally → {chart_local_path}")
 
     chart_raw_url = None
     if GITHUB_TOKEN and GITHUB_REPO:
@@ -223,19 +230,20 @@ for device, device_df in device_groups:
         path_in_repo = f"{GITHUB_ASSETS_PATH}/sensor_trends_{device}.png"
         commit_msg = f"Update sensor_trends_{device}.png - {datetime.utcnow().isoformat()}"
         chart_raw_url = gh_upload_file(GITHUB_REPO, path_in_repo, content_bytes, GITHUB_TOKEN, commit_msg)
+        if chart_raw_url:
+            print(f"✅ Uploaded chart to repo → {chart_raw_url}")
 
-    temp_display = colorize_indicator(latest.get("Temperature (°C)", "N/A"), ALERT_TEMP, "°C")
-    hum_display = f"💧 {latest.get('Humidity (%)', 'N/A')}"
+    temp_display = colorize_indicator(latest.get("Temperature_°C", "N/A"), ALERT_TEMP, "°C")
+    hum_display = f"💧 {latest.get('Humidity_%', 'N/A')}"
     light_display = f"💡 {latest.get('Light', 'N/A')}"
-    aqi_display = colorize_indicator(latest.get("AQI Value", "N/A"), ALERT_AQI)
-    aqi_status = latest.get("AQI Status", "N/A")
-    device_health = latest.get("Device Health", "N/A")
+    aqi_display = colorize_indicator(latest.get("AQI_Value", "N/A"), ALERT_AQI)
+    aqi_status = latest.get("AQI_Status", "N/A")
+    device_health = latest.get("Device_Health", "N/A")
     overall_alert = latest.get("Alert_Status", "✅ Normal")
 
-    # Send Telegram alert if device flips to 🔴
+    # Send Telegram alert only if it flips to 🔴
     if "🔴" in temp_display or "🔴" in aqi_display:
-        message = f"⚠️ Alert for {device}:\nTemperature: {temp_display}\nAQI: {aqi_display}\nTime (UTC): {filtered_df['Last_Updated_UTC'].iloc[0]}"
-        send_telegram_alert(message)
+        send_telegram_alert(f"⚠️ Alert for {device}: {overall_alert}")
 
     chart_md = f"![Sensor Trends]({chart_raw_url})" if chart_raw_url else f"![Sensor Trends](./{chart_local_path})"
 
@@ -247,10 +255,10 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
 
 | Metric | Value | Status |
 |:-------|:------|:-------|
-| Temperature | {temp_display} | {'⚠️ Alert' if str(latest.get('Temperature (°C)', '')) != 'N/A' and float(latest.get('Temperature (°C)', 0)) > ALERT_TEMP else '✅ Normal'} |
+| Temperature | {temp_display} | {'⚠️ Alert' if '🔴' in temp_display else '✅ Normal'} |
 | Humidity | {hum_display} | ✅ Normal |
 | Light | {light_display} | ✅ Normal |
-| AQI | {aqi_display} | {'⚠️ Alert' if str(latest.get('AQI Value', '')) != 'N/A' and float(latest.get('AQI Value', 0)) >= ALERT_AQI else '✅ Normal'} |
+| AQI | {aqi_display} | {'⚠️ Alert' if '🔴' in aqi_display else '✅ Normal'} |
 | AQI Status | 🌫️ {aqi_status} |  |
 | Device Health | ⚙️ {device_health} |  |
 | Overall Alert | {overall_alert} |  |
@@ -261,12 +269,13 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
 </details>
 """
     markdown_device_sections.append(device_section)
+
     summary_rows.append({
         "Device": device,
-        "Temperature (°C)": latest.get("Temperature (°C)"),
-        "Humidity (%)": latest.get("Humidity (%)"),
+        "Temperature (°C)": latest.get("Temperature_°C"),
+        "Humidity (%)": latest.get("Humidity_%"),
         "Light": latest.get("Light"),
-        "AQI Value": latest.get("AQI Value"),
+        "AQI Value": latest.get("AQI_Value"),
         "Alert": overall_alert
     })
 
@@ -275,6 +284,7 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
 # ========================
 summary_df = pd.DataFrame(summary_rows)
 summary_df.to_csv("live_data_summary.csv", index=False)
+print("✅ Saved live_data_summary.csv")
 
 # ========================
 # BUILD DASHBOARD MARKDOWN
@@ -304,6 +314,7 @@ if GITHUB_TOKEN and GITHUB_REPO:
     if not ok:
         print("⚠️ Posting/updating dashboard comment failed.")
 else:
+    print("\n⚠️ GitHub environment variables not found. Printing dashboard markdown below:\n")
     print(dashboard_md)
 
 print("\nDone. Latest summary (CSV) saved and dashboard generated.")
