@@ -10,7 +10,7 @@ from datetime import datetime
 SPREADSHEET_ID = "1EZXrkYyfK-QTrLAlf9-mSelOcmbFCaxzPWYaHHcZbdE"
 SHEET_NAME = "Week 39/52"
 OUTPUT_FILE = "live_data.csv"
-SERVICE_ACCOUNT_FILE = "service_account.json"  # created from secret in the workflow
+SERVICE_ACCOUNT_FILE = "service_account.json"  # created from secret in the github workflow
 
 # -----------------------
 # Authenticate & read sheet
