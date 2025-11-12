@@ -4,13 +4,13 @@ Version 4 — Multi-device monitoring + per-device charts + GitHub comment updat
 Requirements:
  - python packages: pandas, gspread, google-auth, matplotlib, requests
  - service account JSON at SERVICE_ACCOUNT_FILE
- - Environment variables (required):
-     GOOGLE_SHEET_ID
-     TELEGRAM_BOT_TOKEN
-     TELEGRAM_CHAT_ID
-     GITHUB_REPOSITORY
-     ISSUE_NUMBER
-     GITHUB_TOKEN
+ - Environment variables:
+     GOOGLE_SHEET_ID       (your Google Sheet ID)
+     TELEGRAM_BOT_TOKEN    (Telegram bot token)
+     TELEGRAM_CHAT_ID      (Telegram chat ID)
+     GITHUB_REPOSITORY     (owner/repo)
+     ISSUE_NUMBER          (issue number to post/update; default "1")
+     GITHUB_TOKEN          (personal access token or workflow token)
 """
 
 import os
@@ -24,21 +24,9 @@ import matplotlib.pyplot as plt
 import requests
 
 # ========================
-# CONFIGURATION FROM ENV
+# CONFIGURATION
 # ========================
-SERVICE_ACCOUNT_FILE = "service_account.json"
-
-SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-if not SPREADSHEET_ID:
-    raise RuntimeError("GOOGLE_SHEET_ID environment variable not set")
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")      # e.g., "owner/repo"
-ISSUE_NUMBER = os.getenv("ISSUE_NUMBER", "1")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
+SERVICE_ACCOUNT_FILE = "service_account.json"   # path to Google service account JSON
 SHEET_NAME = "Week 39/52"
 START_ROW = 72
 REMOVE_COLUMN = "eCO₂ (ppm)"
@@ -47,7 +35,22 @@ MAX_RECORDS = 200                 # limit per device
 ALERT_TEMP = 30.0                 # °C
 ALERT_AQI = 600.0                 # AQI threshold (>= triggers alert)
 
+# GitHub settings (from env)
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
+ISSUE_NUMBER = os.getenv("ISSUE_NUMBER", "1")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+
+# Telegram (from env)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# Google Sheet ID (from env)
+SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+
+# Assets path
 GITHUB_ASSETS_PATH = "assets/iot_dashboards"
+
+# Marker for GitHub comment
 MARKER = "<!-- IoT_SENSOR_DASHBOARD -->"
 
 # ========================
@@ -61,10 +64,12 @@ gc = gspread.authorize(creds)
 # HELPER FUNCTIONS
 # ========================
 def colorize_indicator(value, threshold, unit=""):
+    """Return emoji + bold text for markdown based on thresholds."""
     try:
         val = float(value)
     except Exception:
         return f"🔸 {value}{unit}"
+
     if val >= threshold:
         return f"🔴 **{val}{unit}**"
     elif val >= threshold * 0.8:
@@ -87,20 +92,71 @@ def generate_alert_text(temp, aqi):
     return " | ".join(alerts) if alerts else "✅ Normal"
 
 def send_telegram_alert(message: str):
-    """Send Telegram message (only if bot token and chat ID set)."""
+    """
+    Send a Telegram message via bot if credentials are provided.
+    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram bot or chat ID not configured. Skipping alert.")
+        print("⚠️ Telegram bot token or chat ID not set. Skipping Telegram alert.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         r = requests.post(url, json=payload)
         if r.status_code == 200:
-            print("📩 Telegram alert sent successfully.")
+            print("✅ Telegram alert sent successfully.")
         else:
-            print(f"⚠️ Telegram alert failed: {r.text}")
+            print(f"⚠️ Telegram alert failed ({r.status_code}): {r.text}")
     except Exception as e:
-        print(f"⚠️ Exception sending Telegram alert: {e}")
+        print(f"⚠️ Telegram alert exception: {e}")
+
+def gh_headers(token):
+    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+
+def gh_upload_file(repo, path_in_repo, content_bytes, token, commit_message="Add asset"):
+    """Upload or update file to GitHub repo via Contents API"""
+    api_url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
+    headers = gh_headers(token)
+
+    # check existing file to get sha
+    get_resp = requests.get(api_url, headers=headers)
+    data = {
+        "message": commit_message,
+        "content": base64.b64encode(content_bytes).decode("utf-8"),
+    }
+    if get_resp.status_code == 200:
+        sha = get_resp.json().get("sha")
+        data["sha"] = sha
+
+    put_resp = requests.put(api_url, headers=headers, json=data)
+    if put_resp.status_code in (200, 201):
+        branch_guess = "main"
+        raw_url = f"https://raw.githubusercontent.com/{repo}/{branch_guess}/{path_in_repo}"
+        return raw_url
+    else:
+        print(f"⚠️ Failed to upload {path_in_repo} to GitHub ({put_resp.status_code}): {put_resp.text}")
+        return None
+
+def find_existing_dashboard_comment(repo, issue_number, token):
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+    r = requests.get(url, headers=gh_headers(token))
+    if r.status_code != 200:
+        print(f"⚠️ Failed to list issue comments ({r.status_code}): {r.text}")
+        return None
+    for comment in r.json():
+        if MARKER in comment.get("body", ""):
+            return comment.get("id")
+    return None
+
+def update_or_create_issue_comment(repo, issue_number, token, body_md):
+    comment_id = find_existing_dashboard_comment(repo, issue_number, token)
+    if comment_id:
+        patch_url = f"https://api.github.com/repos/{repo}/issues/comments/{comment_id}"
+        r = requests.patch(patch_url, headers=gh_headers(token), json={"body": body_md})
+        return r.status_code == 200
+    else:
+        post_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+        r = requests.post(post_url, headers=gh_headers(token), json={"body": body_md})
+        return r.status_code == 201
 
 # ========================
 # LOAD SHEET DATA
@@ -135,19 +191,16 @@ markdown_device_sections = []
 
 os.makedirs("assets_local", exist_ok=True)
 
-# ========================
-# PROCESS DEVICES
-# ========================
 for device, device_df in device_groups:
     device_df = device_df.head(MAX_RECORDS).copy()
     csv_name = f"live_data_{device}.csv"
     device_df.to_csv(csv_name, index=False)
-    print(f"✅ Saved {csv_name} ({len(device_df)} records)")
 
     latest = device_df.iloc[0]
 
-    # Generate trend chart
-    last_n = device_df.head(10)[["Temperature (°C)", "AQI Value"]].copy()[::-1]
+    last_n = device_df.head(10)[["Temperature (°C)", "AQI Value"]].copy()
+    last_n = last_n[::-1]
+
     plt.figure(figsize=(6, 3))
     if "Temperature (°C)" in last_n.columns:
         plt.plot(last_n["Temperature (°C)"].values, marker="o", label="Temperature (°C)")
@@ -163,15 +216,14 @@ for device, device_df in device_groups:
     plt.savefig(chart_local_path)
     plt.close()
 
-    # ALERT: Send Telegram if device turns 🔴
-    if "Temperature (°C)" in latest and float(latest["Temperature (°C)"]) > ALERT_TEMP:
-        alert_msg = f"⚠️ *{device}* temperature alert: {latest['Temperature (°C)']}°C (exceeds {ALERT_TEMP})"
-        send_telegram_alert(alert_msg)
-    if "AQI Value" in latest and float(latest["AQI Value"]) >= ALERT_AQI:
-        alert_msg = f"⚠️ *{device}* AQI alert: {latest['AQI Value']} (exceeds {ALERT_AQI})"
-        send_telegram_alert(alert_msg)
+    chart_raw_url = None
+    if GITHUB_TOKEN and GITHUB_REPO:
+        with open(chart_local_path, "rb") as f:
+            content_bytes = f.read()
+        path_in_repo = f"{GITHUB_ASSETS_PATH}/sensor_trends_{device}.png"
+        commit_msg = f"Update sensor_trends_{device}.png - {datetime.utcnow().isoformat()}"
+        chart_raw_url = gh_upload_file(GITHUB_REPO, path_in_repo, content_bytes, GITHUB_TOKEN, commit_msg)
 
-    # prepare markdown for GitHub issue
     temp_display = colorize_indicator(latest.get("Temperature (°C)", "N/A"), ALERT_TEMP, "°C")
     hum_display = f"💧 {latest.get('Humidity (%)', 'N/A')}"
     light_display = f"💡 {latest.get('Light', 'N/A')}"
@@ -180,7 +232,13 @@ for device, device_df in device_groups:
     device_health = latest.get("Device Health", "N/A")
     overall_alert = latest.get("Alert_Status", "✅ Normal")
 
-    chart_md = f"![Sensor Trends](./{chart_local_path})"
+    # Send Telegram alert if device flips to 🔴
+    if "🔴" in temp_display or "🔴" in aqi_display:
+        message = f"⚠️ Alert for {device}:\nTemperature: {temp_display}\nAQI: {aqi_display}\nTime (UTC): {filtered_df['Last_Updated_UTC'].iloc[0]}"
+        send_telegram_alert(message)
+
+    chart_md = f"![Sensor Trends]({chart_raw_url})" if chart_raw_url else f"![Sensor Trends](./{chart_local_path})"
+
     device_section = f"""
 <details>
 <summary>🧠 **{device}** — {overall_alert}</summary>
@@ -213,7 +271,7 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
     })
 
 # ========================
-# WRITE SUMMARY CSV
+# WRITE summary CSV
 # ========================
 summary_df = pd.DataFrame(summary_rows)
 summary_df.to_csv("live_data_summary.csv", index=False)
@@ -239,35 +297,13 @@ _This comment is auto-generated by the IoT monitoring script._
 """
 
 # ========================
-# POST OR UPDATE GITHUB ISSUE COMMENT
+# POST or UPDATE GITHUB ISSUE COMMENT
 # ========================
-def gh_headers(token):
-    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-
-def find_existing_dashboard_comment(repo, issue_number, token):
-    base_comments_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-    r = requests.get(base_comments_url, headers=gh_headers(token))
-    if r.status_code != 200:
-        return None
-    for comment in r.json():
-        if MARKER in (comment.get("body") or ""):
-            return comment.get("id")
-    return None
-
-def update_or_create_issue_comment(repo, issue_number, token, body_md):
-    comment_id = find_existing_dashboard_comment(repo, issue_number, token)
-    if comment_id:
-        patch_url = f"https://api.github.com/repos/{repo}/issues/comments/{comment_id}"
-        r = requests.patch(patch_url, headers=gh_headers(token), json={"body": body_md})
-        return r.status_code == 200
-    else:
-        post_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-        r = requests.post(post_url, headers=gh_headers(token), json={"body": body_md})
-        return r.status_code == 201
-
 if GITHUB_TOKEN and GITHUB_REPO:
-    update_or_create_issue_comment(GITHUB_REPO, ISSUE_NUMBER, GITHUB_TOKEN, dashboard_md)
+    ok = update_or_create_issue_comment(GITHUB_REPO, ISSUE_NUMBER, GITHUB_TOKEN, dashboard_md)
+    if not ok:
+        print("⚠️ Posting/updating dashboard comment failed.")
 else:
     print(dashboard_md)
 
-print("✅ Done. Latest summary CSV and dashboard generated.")
+print("\nDone. Latest summary (CSV) saved and dashboard generated.")
