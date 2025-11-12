@@ -32,19 +32,7 @@ iot-sensor-dashboard/
 
 ```
 
-iot-sensor-dashboard/
-│
-├── update_sheet_v4.py          # Main Python script for reading, processing, and updating sensor data
-├── README.md                   # Project documentation
-├── ALERT_ISSUE_TEMPLATE.md     # Template for GitHub issue alerts
-├── requirements.txt            # Python dependencies
-├── assets_local/               # Temporary local folder for charts
-├── assets/iot_dashboards/      # Repository folder for uploaded charts
-└── .github/
-└── workflows/
-└── update_live_data.yml # GitHub Actions workflow
 
-````
 
 ---
 
