@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Version 4+ — Multi-device monitoring + per-device charts + GitHub comment update + Telegram alerts
-Added:
+Paths adapted for Option A (Vercel): writes to `public/` for static serving.
+Adds:
  - Rolling window CSVs for live use (keeps last N rows per device)
  - Monthly Parquet archival for full history
  - Generates README device chart markdown snippet and injects into README placeholder
@@ -32,7 +33,7 @@ import pyarrow.parquet as pq
 # ========================
 # CONFIGURATION
 # ========================
-SERVICE_ACCOUNT_FILE = "service_account.json"   # path to Google service account file (created by workflow)
+SERVICE_ACCOUNT_FILE = "service_account.json"   # path to Google service account file created by workflow
 SHEET_NAME = "Week 39/52"
 START_ROW = 72
 REMOVE_COLUMN = "eCO₂ (ppm)"
@@ -54,16 +55,27 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # Google Sheet ID (from env)
 SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 
-# Paths
-LIVE_DIR = "live_data"                      # small CSVs used by dashboards (committed)
-ARCHIVE_DIR = "archive_parquet"             # monthly Parquet archives (committed or stored)
+# Paths (Option A layout)
+PUBLIC_DIR = "public"
+PUBLIC_DEVICES_DIR = os.path.join(PUBLIC_DIR, "devices")
+PUBLIC_RAW_DIR = os.path.join(PUBLIC_DIR, "raw")
+ARCHIVE_DIR = "archive_parquet"
 ASSETS_LOCAL = "assets_local"               # temp charts
-GITHUB_ASSETS_PATH = "assets/iot_dashboards" # uploaded assets path in repo
 README_SNIPPET = "device_charts_snippet.md" # generated snippet
 README_FILE = "README.md"
 
+GITHUB_ASSETS_PATH = "public/devices"  # when uploading to repo via API
+
 # Marker for the comment so we can find & update it
 MARKER = "<!-- IoT_SENSOR_DASHBOARD -->"
+
+# ========================
+# PREPARE PATHS
+# ========================
+os.makedirs(PUBLIC_DEVICES_DIR, exist_ok=True)
+os.makedirs(PUBLIC_RAW_DIR, exist_ok=True)
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
+os.makedirs(ASSETS_LOCAL, exist_ok=True)
 
 # ========================
 # AUTHENTICATE GOOGLE SHEETS
@@ -76,10 +88,9 @@ creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPE
 gc = gspread.authorize(creds)
 
 # ========================
-# HELPER FUNCTIONS
+# HELPERS
 # ========================
 def safe_name(s: str) -> str:
-    """Create a filesystem-friendly, lowercase name for devices."""
     return str(s).strip().replace(" ", "-").replace("/", "-").replace("\\", "-").lower()
 
 def colorize_indicator(value, threshold, unit=""):
@@ -113,35 +124,24 @@ def gh_headers(token):
     return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
 
 def gh_upload_file(repo, path_in_repo, content_bytes, token, commit_message="Add asset"):
-    """
-    Upload or update a file to GitHub repository using Contents API.
-    Returns the raw.githubusercontent URL on success, or None on failure.
-    """
     api_url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
     headers = gh_headers(token)
-
-    # Check if file already exists to obtain 'sha'
     get_resp = requests.get(api_url, headers=headers)
-    data = {
-        "message": commit_message,
-        "content": base64.b64encode(content_bytes).decode("utf-8"),
-    }
+    data = {"message": commit_message, "content": base64.b64encode(content_bytes).decode("utf-8")}
     if get_resp.status_code == 200:
         sha = get_resp.json().get("sha")
         data["sha"] = sha
-
     put_resp = requests.put(api_url, headers=headers, json=data)
     if put_resp.status_code in (200, 201):
-        branch_guess = "main"
-        raw_url = f"https://raw.githubusercontent.com/{repo}/{branch_guess}/{path_in_repo}"
+        raw_url = f"https://raw.githubusercontent.com/{repo}/main/{path_in_repo}"
         return raw_url
     else:
         print(f"⚠️ Failed to upload {path_in_repo} to GitHub ({put_resp.status_code}): {put_resp.text}")
         return None
 
 def find_existing_dashboard_comment(repo, issue_number, token):
-    base_comments_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-    r = requests.get(base_comments_url, headers=gh_headers(token))
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+    r = requests.get(url, headers=gh_headers(token))
     if r.status_code != 200:
         print(f"⚠️ Failed to list issue comments ({r.status_code}): {r.text}")
         return None
@@ -155,21 +155,11 @@ def update_or_create_issue_comment(repo, issue_number, token, body_md):
     if comment_id:
         patch_url = f"https://api.github.com/repos/{repo}/issues/comments/{comment_id}"
         r = requests.patch(patch_url, headers=gh_headers(token), json={"body": body_md})
-        if r.status_code == 200:
-            print("🔄 Updated existing GitHub dashboard comment successfully.")
-            return True
-        else:
-            print(f"⚠️ Failed to update comment ({r.status_code}): {r.text}")
-            return False
+        return r.status_code == 200
     else:
         post_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
         r = requests.post(post_url, headers=gh_headers(token), json={"body": body_md})
-        if r.status_code == 201:
-            print("💬 Created new dashboard comment on GitHub.")
-            return True
-        else:
-            print(f"⚠️ Failed to create comment ({r.status_code}): {r.text}")
-            return False
+        return r.status_code == 201
 
 def send_telegram_alert(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -193,40 +183,21 @@ sheet = gc.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
 rows = sheet.get_all_records()
 df = pd.DataFrame(rows)
 
-# ========================
-# NORMALIZE COLUMN NAMES
-# ========================
-# Make columns filesystem and code friendly: strip, replace spaces -> _, remove parentheses
+# Normalize column names
 df.columns = [c.strip().replace(" ", "_").replace("(", "").replace(")", "") for c in df.columns]
 
-# Standard names we will expect/use
-# After normalization:
-# "Temperature (°C)" -> "Temperature_°C"
-# "AQI Value" -> "AQI_Value"
-# "Humidity (%)" -> "Humidity_%"
-# "Device ID" -> "Device_ID"
-# "Device Health" -> "Device_Health"
-# "AQI Status" -> "AQI_Status"
-
-# ========================
-# CLEAN & FILTER - overall sheet
-# ========================
+# Filter start row and drop the REMOVE_COLUMN if present
 filtered_df = df.iloc[START_ROW - 2:].copy()
 remove_col_normalized = REMOVE_COLUMN.replace(" ", "_").replace("(", "").replace(")", "")
 if remove_col_normalized in filtered_df.columns:
     filtered_df.drop(columns=[remove_col_normalized], inplace=True)
 
-# If 'Timestamp' exists, try parse it; else proceed
 if 'Timestamp' in filtered_df.columns:
     filtered_df['Timestamp'] = pd.to_datetime(filtered_df['Timestamp'], errors='coerce')
     filtered_df = filtered_df.sort_values(by='Timestamp', ascending=False).reset_index(drop=True)
 
 filtered_df["Last_Updated_UTC"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-def compute_alert_row(r):
-    return generate_alert_text(r.get("Temperature_°C"), r.get("AQI_Value"))
-
-filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
+filtered_df["Alert_Status"] = filtered_df.apply(lambda r: generate_alert_text(r.get("Temperature_°C"), r.get("AQI_Value")), axis=1)
 
 if "Device_ID" not in filtered_df.columns:
     raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
@@ -234,46 +205,46 @@ if "Device_ID" not in filtered_df.columns:
 device_groups = filtered_df.groupby("Device_ID")
 summary_rows = []
 markdown_device_sections = []
-
-# Ensure directories exist
-os.makedirs(ASSETS_LOCAL, exist_ok=True)
-os.makedirs(LIVE_DIR, exist_ok=True)
-os.makedirs(ARCHIVE_DIR, exist_ok=True)
-
-# Keep a list for README snippet
 device_id_list = []
 
 for device, device_df in device_groups:
-    # preserve full_df (before trimming) for archival
     full_df = device_df.copy().reset_index(drop=True)
 
-    # Apply rolling window to keep live CSV small
+    # Rolling window for live CSV
     if len(full_df) > ROLLING_WINDOW:
-        device_df = full_df.tail(ROLLING_WINDOW).reset_index(drop=True)
+        device_df_live = full_df.tail(ROLLING_WINDOW).reset_index(drop=True)
     else:
-        device_df = full_df.copy().reset_index(drop=True)
+        device_df_live = full_df.copy().reset_index(drop=True)
 
-    # Also keep MAX_RECORDS ordering for charts / summary - newest first
-    device_df_for_chart = device_df.head(MAX_RECORDS).copy()
+    # Chart / summary selection
+    device_df_for_chart = device_df_live.head(MAX_RECORDS).copy()
 
-    # Save small live CSV for dashboard consumption (rolling window)
+    # Prepare device folder under public/devices/<device_key>/
     device_key = safe_name(device)
-    csv_path_live = os.path.join(LIVE_DIR, f"{device_key}.csv")
-    device_df.to_csv(csv_path_live, index=False)
-    print(f"✅ Saved live CSV for device -> {csv_path_live} ({len(device_df)} rows)")
+    device_public_dir = os.path.join(PUBLIC_DEVICES_DIR, device_key)
+    os.makedirs(device_public_dir, exist_ok=True)
 
-    # Save per-run CSV as before (optional older name for compatibility)
-    csv_name = f"live_data_{device_key}.csv"
-    device_df.to_csv(csv_name, index=False)
-    print(f"✅ Also saved compatibility CSV -> {csv_name}")
+    # Save live CSV to public/raw and per-device CSV to public/devices/<device>/data.csv
+    public_live_csv = os.path.join(PUBLIC_RAW_DIR, "live_data.csv")  # global combined live csv (optional)
+    # Save per-device live CSV
+    device_live_csv = os.path.join(device_public_dir, f"{device_key}.csv")
+    device_df_live.to_csv(device_live_csv, index=False)
+    print(f"✅ Saved live CSV for device -> {device_live_csv} ({len(device_df_live)} rows)")
 
-    # Generate small summary/preview for repo & charts (latest reading)
-    latest = device_df.iloc[0]
+    # Also write combined global CSV of last rows (append or rebuild)
+    # We'll create a small combined CSV that concatenates the most recent rows per device.
+    # (Here we recreate combined file at the end after the loop)
 
-    # Create trend chart for last up-to MAX_RECORDS (reverse for plotting left->right)
-    last_n = device_df_for_chart.head(MAX_RECORDS)[["Temperature_°C", "AQI_Value"]].copy()
+    # Save compatibility CSV at repo root (unchanged behavior)
+    compatibility_csv = f"live_data_{device_key}.csv"
+    device_df_live.to_csv(compatibility_csv, index=False)
+
+    # Latest reading for summaries
+    latest = device_df_live.iloc[0]
+
+    # Plotting last N readings for chart
+    last_n = device_df_for_chart[["Temperature_°C", "AQI_Value"]].copy() if set(["Temperature_°C","AQI_Value"]).issubset(device_df_for_chart.columns) else pd.DataFrame()
     last_n = last_n[::-1]  # oldest -> newest
-
     plt.figure(figsize=(6, 3))
     if "Temperature_°C" in last_n.columns:
         plt.plot(last_n["Temperature_°C"].values, marker="o", label="Temperature (°C)")
@@ -285,41 +256,62 @@ for device, device_df in device_groups:
     plt.legend()
     plt.tight_layout()
 
-    chart_local_path = os.path.join(ASSETS_LOCAL, f"{device_key}_trend.png")
+    chart_local_path = os.path.join(device_public_dir, f"{device_key}_trend.png")
     plt.savefig(chart_local_path)
     plt.close()
     print(f"📈 Chart saved locally → {chart_local_path}")
 
-    # Upload chart to GitHub repo if token & repo provided
+    # Upload chart to GitHub (optional) to ensure raw.githubusercontent links exist in main branch if wanted
     chart_raw_url = None
     if GITHUB_TOKEN and GITHUB_REPO:
         try:
             with open(chart_local_path, "rb") as f:
                 content_bytes = f.read()
-            path_in_repo = f"{GITHUB_ASSETS_PATH}/{device_key}_trend.png"
+            path_in_repo = f"{GITHUB_ASSETS_PATH}/{device_key}/{device_key}_trend.png"
             commit_msg = f"Update sensor_trends_{device_key}.png - {datetime.utcnow().isoformat()}"
             chart_raw_url = gh_upload_file(GITHUB_REPO, path_in_repo, content_bytes, GITHUB_TOKEN, commit_msg)
             if chart_raw_url:
                 print(f"✅ Uploaded chart to repo → {chart_raw_url}")
+                # use repo raw path for README snippet
+                chart_rel_path = path_in_repo
+            else:
+                chart_rel_path = os.path.join(device_public_dir, f"{device_key}_trend.png")
         except Exception as e:
             print(f"⚠️ Chart upload failed for {device}: {e}")
+            chart_rel_path = os.path.join(device_public_dir, f"{device_key}_trend.png")
+    else:
+        chart_rel_path = os.path.join(device_public_dir, f"{device_key}_trend.png")
 
-    # Prepare displays & markdown
+    # Stats JSON (useful for Vercel frontends)
+    stats = {
+        "device": device,
+        "last_updated_utc": filtered_df['Last_Updated_UTC'].iloc[0],
+        "temperature": latest.get("Temperature_°C"),
+        "humidity": latest.get("Humidity_%"),
+        "light": latest.get("Light"),
+        "aqi_value": latest.get("AQI_Value"),
+        "aqi_status": latest.get("AQI_Status"),
+        "device_health": latest.get("Device_Health"),
+        "alert_status": latest.get("Alert_Status")
+    }
+    stats_json_path = os.path.join(device_public_dir, f"{device_key}_stats.json")
+    with open(stats_json_path, "w", encoding="utf-8") as jf:
+        json.dump(stats, jf, ensure_ascii=False, indent=2)
+    print(f"📝 Stats saved → {stats_json_path}")
+
+    # Telegram alert only when flips to 🔴
     temp_display = colorize_indicator(latest.get("Temperature_°C", "N/A"), ALERT_TEMP, "°C")
-    hum_display = f"💧 {latest.get('Humidity_%', 'N/A')}"
-    light_display = f"💡 {latest.get('Light', 'N/A')}"
     aqi_display = colorize_indicator(latest.get("AQI_Value", "N/A"), ALERT_AQI)
-    aqi_status = latest.get("AQI_Status", "N/A")
-    device_health = latest.get("Device_Health", "N/A")
-    overall_alert = latest.get("Alert_Status", "✅ Normal")
-
-    # Telegram alert: only when flips to 🔴 (temperature or AQI)
     if ("🔴" in temp_display) or ("🔴" in aqi_display):
         message = f"⚠️ Alert for *{device}*\nTemperature: {temp_display}\nAQI: {aqi_display}\nTime (UTC): {filtered_df['Last_Updated_UTC'].iloc[0]}"
         send_telegram_alert(message)
 
-    chart_md = f"![Sensor Trends]({chart_raw_url})" if chart_raw_url else f"![Sensor Trends](./{chart_local_path})"
+    # Markdown section
+    aqi_status = latest.get("AQI_Status", "N/A")
+    device_health = latest.get("Device_Health", "N/A")
+    overall_alert = latest.get("Alert_Status", "✅ Normal")
 
+    chart_md = f"![Sensor Trends]({chart_rel_path})"
     device_section = f"""
 <details>
 <summary>🧠 **{device}** — {overall_alert}</summary>
@@ -329,8 +321,8 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
 | Metric | Value | Status |
 |:-------|:------|:-------|
 | Temperature | {temp_display} | {'⚠️ Alert' if '🔴' in temp_display else '✅ Normal'} |
-| Humidity | {hum_display} | ✅ Normal |
-| Light | {light_display} | ✅ Normal |
+| Humidity | 💧 {latest.get('Humidity_%', 'N/A')} | ✅ Normal |
+| Light | 💡 {latest.get('Light', 'N/A')} | ✅ Normal |
 | AQI | {aqi_display} | {'⚠️ Alert' if '🔴' in aqi_display else '✅ Normal'} |
 | AQI Status | 🌫️ {aqi_status} |  |
 | Device Health | ⚙️ {device_health} |  |
@@ -352,15 +344,13 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
         "Alert": overall_alert
     })
 
-    # --- Parquet archival (monthly) ---
+    # Parquet archival (monthly) using full_df
     try:
         month_tag = datetime.utcnow().strftime("%Y-%m")
         parquet_filename = f"{device_key}_{month_tag}.parquet"
         parquet_path = os.path.join(ARCHIVE_DIR, parquet_filename)
 
-        # If archive exists, append (load existing, concat, drop dup by Timestamp if available)
         full_df_for_parquet = full_df.copy()
-        # Ensure Timestamp column exists & parsed for deduplication
         if 'Timestamp' in full_df_for_parquet.columns:
             full_df_for_parquet['Timestamp'] = pd.to_datetime(full_df_for_parquet['Timestamp'], errors='coerce')
 
@@ -368,39 +358,46 @@ _Last updated (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
             try:
                 existing = pd.read_parquet(parquet_path)
                 combined = pd.concat([existing, full_df_for_parquet], ignore_index=True)
-                # drop duplicates by Timestamp if present, else keep all
                 if 'Timestamp' in combined.columns:
                     combined = combined.drop_duplicates(subset=['Timestamp'], keep='last').sort_values(by='Timestamp')
                 combined.reset_index(drop=True, inplace=True)
                 combined.to_parquet(parquet_path, index=False)
                 print(f"🗄️ Appended to existing parquet archive → {parquet_path}")
             except Exception as e:
-                # if read fails, overwrite to avoid breaking pipeline
                 full_df_for_parquet.to_parquet(parquet_path, index=False)
                 print(f"⚠️ Rewrote parquet archive due to error: {parquet_path} ({e})")
         else:
-            # write new parquet
             full_df_for_parquet.to_parquet(parquet_path, index=False)
             print(f"🗄️ Created new parquet archive → {parquet_path}")
     except Exception as e:
         print(f"⚠️ Parquet archival failed for {device}: {e}")
 
     # add to device list for README snippet
-    device_id_list.append({"device": device, "device_key": device_key, "chart_path": f"{GITHUB_ASSETS_PATH}/{device_key}_trend.png" if chart_raw_url else os.path.join(ASSETS_LOCAL, f"{device_key}_trend.png")})
+    device_id_list.append({"device": device, "device_key": device_key, "chart_path": chart_rel_path})
 
-# ========================
-# WRITE summary CSV (small)
-# ========================
+# END LOOP devices
+
+# Write combined small summary CSV (live)
 summary_df = pd.DataFrame(summary_rows)
-summary_live_path = os.path.join(LIVE_DIR, "live_data_summary.csv")
-summary_df.to_csv(summary_live_path, index=False)
-# also keep compatibility in root
+combined_live_csv_path = os.path.join(PUBLIC_RAW_DIR, "live_data_summary.csv")
+summary_df.to_csv(combined_live_csv_path, index=False)
 summary_df.to_csv("live_data_summary.csv", index=False)
-print(f"✅ Saved summary CSV -> {summary_live_path}")
+print(f"✅ Saved summary CSV -> {combined_live_csv_path}")
 
-# ========================
-# BUILD DASHBOARD MARKDOWN
-# ========================
+# Optionally: build a combined global 'live_data.csv' with latest N rows across devices
+# Here we create a combined CSV containing up to ROLLING_WINDOW rows per device concatenated
+combined_rows = []
+for device, device_df in device_groups:
+    # device_df refers to original grouped object; re-query from filtered_df to get latest live rows
+    tmp = filtered_df[filtered_df['Device_ID'] == device].head(ROLLING_WINDOW)
+    combined_rows.append(tmp)
+if combined_rows:
+    combined_df = pd.concat(combined_rows, ignore_index=True)
+    combined_df.to_csv(os.path.join(PUBLIC_RAW_DIR, "live_data.csv"), index=False)
+    combined_df.to_csv("live_data.csv", index=False)
+    print("✅ Wrote combined public raw live_data.csv")
+
+# Build dashboard markdown
 dashboard_md = f"""{MARKER}
 
 # 🌡️ IoT Sensor Monitoring Dashboard
@@ -418,9 +415,6 @@ _Last update (UTC): **{filtered_df['Last_Updated_UTC'].iloc[0]}**_
 _This comment is auto-generated by the IoT monitoring script._
 """
 
-# ========================
-# POST or UPDATE GITHUB ISSUE COMMENT
-# ========================
 if GITHUB_TOKEN and GITHUB_REPO:
     ok = update_or_create_issue_comment(GITHUB_REPO, ISSUE_NUMBER, GITHUB_TOKEN, dashboard_md)
     if not ok:
@@ -429,24 +423,21 @@ else:
     print("\n⚠️ GitHub environment variables not found. Printing dashboard markdown below:\n")
     print(dashboard_md)
 
-# ========================
-# Generate README device charts snippet & inject into README
-# ========================
+# Generate README snippet & inject
 try:
     snippet_lines = ["## Device Trend Charts\n\n"]
     for d in device_id_list:
         display_name = d["device"]
-        # use repo-relative path (uploaded) when chart_raw_url exists, else local path
         chart_rel_path = d["chart_path"]
+        # prefer repo-relative path (raw URL) if uploaded, else public path
         snippet_lines.append(f"### {display_name}\n")
         snippet_lines.append(f"![{display_name} Temperature & AQI]({chart_rel_path})\n\n")
 
     snippet_text = "".join(snippet_lines)
-    with open(README_SNIPPET, "w") as f:
+    with open(README_SNIPPET, "w", encoding="utf-8") as f:
         f.write(snippet_text)
     print(f"✅ Wrote README snippet -> {README_SNIPPET}")
 
-    # Inject into README.md at placeholder <!-- DEVICE_CHARTS_SNIPPET -->
     if os.path.exists(README_FILE):
         with open(README_FILE, "r", encoding="utf-8") as f:
             readme_content = f.read()
