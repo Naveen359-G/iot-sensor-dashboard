@@ -3,46 +3,51 @@ name: Update live_data.csv from Google Sheets
 on:
   schedule:
     - cron: "0 * * * *"  # every hour UTC
-  workflow_dispatch:      # allows manual trigger
+  workflow_dispatch:
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install dependencies
-      run: |
-        pip install pandas gspread google-auth matplotlib requests
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas gspread google-auth matplotlib requests pyarrow
 
-    - name: Create service account JSON
-      run: |
-        echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service_account.json
+      - name: Create service account JSON
+        run: |
+          echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service_account.json
 
-    - name: Run update script
-      env:
-        GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        GITHUB_REPOSITORY: ${{ secrets.GITHUB_REPOSITORY }}
-        ISSUE_NUMBER: ${{ secrets.ISSUE_NUMBER }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        python update_sheet_v4.py
+      - name: Run update script
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_REPOSITORY: ${{ secrets.GITHUB_REPOSITORY }}
+          ISSUE_NUMBER: ${{ secrets.ISSUE_NUMBER }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p public/devices
+          python scripts/update_sheet_v4.py
 
-    - name: Commit and push changes if any
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        git config --global user.email "noreply@github.com"
-        git config --global user.name "GitHub Actions"
-        git add live_data_summary.csv live_data_*.csv || echo "No CSV files to add"
-        git diff --cached --quiet || git commit -m "Auto-update live_data CSVs from Google Sheets"
-        git diff --cached --quiet || git push
+      - name: Commit and push changes if any
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.email "noreply@github.com"
+          git config --global user.name "GitHub Actions"
+          # Add the files we expect to change
+          git add public/raw public/devices archive_parquet device_charts_snippet.md README.md live_data_summary.csv live_data_*.csv || echo "No files to add"
+          # Commit only if there are staged changes
+          git diff --cached --quiet || git commit -m "Auto-update IoT live data, charts and README snippet"
+          git diff --cached --quiet || git push
