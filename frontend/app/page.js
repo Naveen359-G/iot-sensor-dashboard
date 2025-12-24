@@ -3,10 +3,25 @@
 import { useEffect, useState } from "react";
 import ChartCard from "./components/ChartCard";
 import InsightBox from "./components/InsightBox";
+import ControlPanel from "./components/ControlPanel";
+import ParameterList from "./components/ParameterList";
 
 export default function Home() {
   const [data, setData] = useState([]);
   const [columns, setColumns] = useState([]);
+  const [status, setStatus] = useState(null);
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch("/api/status");
+      if (res.ok) {
+        const json = await res.json();
+        setStatus(json);
+      }
+    } catch (e) {
+      console.error("Error fetching status:", e);
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -26,7 +41,34 @@ export default function Home() {
       }
     }
     fetchData();
+    fetchStatus();
   }, []);
+
+  const handleIntervalChange = async (newInterval) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: newInterval })
+      });
+      if (res.ok) {
+        fetchStatus(); // Refresh status
+      }
+    } catch (e) {
+      console.error("Error updating interval:", e);
+    }
+  };
+
+  const handleCalibrate = async () => {
+    try {
+      const res = await fetch("/api/calibrate", { method: "POST" });
+      if (res.ok) {
+        fetchStatus();
+      }
+    } catch (e) {
+      console.error("Error calibration:", e);
+    }
+  };
 
   // Helper to get data series for a specific metric
   const getDataFor = (keyword) => {
@@ -45,6 +87,8 @@ export default function Home() {
   const aqi = getDataFor("aqi");
   const heap = getDataFor("heap") || getDataFor("health") || getDataFor("device"); // Fallbacks
 
+  const latestData = data.length > 0 ? data[data.length - 1] : null;
+
   return (
     <main className="container">
       <div style={{ marginBottom: "2rem" }}>
@@ -52,22 +96,41 @@ export default function Home() {
         <p style={{ color: "var(--text-secondary)" }}>Live environmental monitoring</p>
       </div>
 
-      <InsightBox text="System active. Monitoring environmental parameters in real-time." />
+      <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+        <div style={{ flex: "1", minWidth: "350px" }}>
+          {/* New Parameter List Block */}
+          {latestData && (
+            <ParameterList data={latestData} />
+          )}
 
-      {data.length > 0 && (
-        <div className="card-grid">
-          {/* Row 1 */}
-          {temp && <ChartCard title={temp.title} data={temp.series} />}
-          {humidity && <ChartCard title={humidity.title} data={humidity.series} />}
-
-          {/* Row 2 */}
-          {light && <ChartCard title={light.title} data={light.series} />}
-          {aqi && <ChartCard title={aqi.title} data={aqi.series} />}
-
-          {/* Row 3 - Full Width for Heap/Health */}
-          {heap && <ChartCard className="full-width" title={heap.title} data={heap.series} />}
+          {/* Controls */}
+          <ControlPanel
+            status={status}
+            onIntervalChange={handleIntervalChange}
+            onCalibrate={handleCalibrate}
+          />
         </div>
-      )}
+
+        <div style={{ flex: "1", minWidth: "350px" }}>
+          {/* Existing Charts */}
+          <InsightBox text="System active. Monitoring environmental parameters in real-time." />
+
+          {data.length > 0 && (
+            <div className="card-grid" style={{ gridTemplateColumns: "1fr" }}> {/* Force single column for right side */}
+              {/* Row 1 */}
+              {temp && <ChartCard title={temp.title} data={temp.series} />}
+              {humidity && <ChartCard title={humidity.title} data={humidity.series} />}
+
+              {/* Row 2 */}
+              {light && <ChartCard title={light.title} data={light.series} />}
+              {aqi && <ChartCard title={aqi.title} data={aqi.series} />}
+
+              {/* Row 3 - Full Width for Heap/Health */}
+              {heap && <ChartCard className="full-width" title={heap.title} data={heap.series} />}
+            </div>
+          )}
+        </div>
+      </div>
     </main>
   );
 }
