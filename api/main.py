@@ -6,7 +6,23 @@ import os
 
 app = FastAPI(root_path="/api")
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "live_data.csv")
+# Robust CSV path finding
+POSSIBLE_PATHS = [
+    os.path.join(os.path.dirname(__file__), "..", "live_data.csv"),
+    os.path.join(os.path.dirname(__file__), "live_data.csv"),
+    "/var/task/live_data.csv", # Common Vercel Lambda path
+    "live_data.csv"
+]
+
+DATA_PATH = None
+for p in POSSIBLE_PATHS:
+    if os.path.exists(p):
+        DATA_PATH = p
+        break
+
+if not DATA_PATH:
+    # Fallback to relative if nothing found (will likely fail later but avoids crash here)
+    DATA_PATH = "live_data.csv"
 
 @app.get("/")
 def root():
