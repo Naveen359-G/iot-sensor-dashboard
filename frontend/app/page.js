@@ -9,13 +9,23 @@ export default function Home() {
   const [columns, setColumns] = useState([]);
 
   useEffect(() => {
-    fetch("/api/data/json")
-      .then(res => res.json())
-      .then(setData);
+    async function fetchData() {
+      try {
+        const dataRes = await fetch("/api/data/json");
+        if (!dataRes.ok) throw new Error("Failed to fetch data");
+        const dataJson = await dataRes.json();
+        setData(dataJson);
 
-    fetch("/api/data/columns")
-      .then(res => res.json())
-      .then(r => setColumns(r.columns || []));
+        const colRes = await fetch("/api/data/columns");
+        if (colRes.ok) {
+          const colJson = await colRes.json();
+          setColumns(colJson.columns || []);
+        }
+      } catch (error) {
+        console.error("Error fetching data:", error);
+      }
+    }
+    fetchData();
   }, []);
 
   return (

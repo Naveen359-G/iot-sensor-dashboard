@@ -17,10 +17,14 @@ def get_csv():
 
 @app.get("/data/json")
 def get_json():
+    if not os.path.exists(DATA_PATH):
+        return JSONResponse([])
     df = pd.read_csv(DATA_PATH)
     return JSONResponse(df.tail(100).to_dict(orient="records"))
 
 @app.get("/data/columns")
 def get_columns():
+    if not os.path.exists(DATA_PATH):
+        return {"columns": []}
     df = pd.read_csv(DATA_PATH)
     return {"columns": list(df.columns)}
