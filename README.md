@@ -138,7 +138,30 @@ Per-device trend charts are generated and uploaded to GitHub:
 
 ---
 
-## Step 7: Usage Instructions
+## Step 7: Deployment (Vercel)
+
+This project is configured for seamless deployment on **Vercel** as a monorepo (Frontend + Python API).
+
+1. **Install Vercel CLI** (or use the web dashboard):
+   ```bash
+   npm i -g vercel
+   ```
+
+2. **Deploy**:
+   ```bash
+   vercel
+   ```
+   *   Vercel will detect the `vercel.json` configuration.
+   *   It validates the Next.js frontend and Python API.
+
+3. **Verify**:
+   *   Frontend: `https://<your-app>.vercel.app/`
+   *   API: `https://<your-app>.vercel.app/api/`
+
+---
+
+
+## Step 8: Usage Instructions
 
 1. Clone the repository:
 ```bash
@@ -167,7 +190,7 @@ pip install -r requirements.txt
 
 ---
 
-## Step 8: Monitoring & Maintenance
+## Step 9: Monitoring & Maintenance
 
 * Check GitHub Actions logs for errors
 * Verify CSVs and dashboard updates in the repository
@@ -176,7 +199,7 @@ pip install -r requirements.txt
 
 ---
 
-## Step 9: Future Improvements
+## Step 10: Future Improvements
 
 * Add more IoT metrics (e.g., CO₂, soil moisture)
 * Enhance charts and visualizations
