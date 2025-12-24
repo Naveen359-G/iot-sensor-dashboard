@@ -20,36 +20,77 @@ ChartJS.register(
   Legend
 );
 
-export default function ChartCard({ title, data }) {
+export default function ChartCard({ title, data, className }) {
   const chartData = {
     labels: data.map((_, i) => i + 1),
     datasets: [
       {
         label: title,
         data: data,
-        borderColor: "rgb(75, 192, 192)",
-        backgroundColor: "rgba(75, 192, 192, 0.5)",
-        tension: 0.2,
+        borderColor: "rgb(59, 130, 246)", // accent-color #3b82f6
+        backgroundColor: "rgba(59, 130, 246, 0.1)",
+        borderWidth: 2,
+        pointRadius: 2,
+        tension: 0.4, // Smooth curves
+        fill: true,
       },
     ],
   };
 
   const options = {
     responsive: true,
+    maintainAspectRatio: false,
     plugins: {
       legend: {
-        position: "top",
+        display: false,
       },
       title: {
         display: true,
         text: title,
+        color: "#64748b",
+        font: {
+          size: 14,
+          weight: 500
+        }
       },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+      }
     },
+    scales: {
+      x: {
+        display: false,
+      },
+      y: {
+        border: { display: false },
+        grid: {
+          color: "#f1f5f9",
+        },
+        ticks: {
+          color: "#94a3b8",
+          font: { size: 10 }
+        }
+      }
+    }
+  };
+
+  const cardStyle = {
+    background: "var(--card-bg)",
+    borderRadius: "var(--radius-lg)",
+    boxShadow: "var(--shadow-md)",
+    padding: "1.5rem",
+    border: "1px solid var(--border-color)",
+    height: "300px", // Fixed height for consistent grid
+    display: "flex",
+    flexDirection: "column"
   };
 
   return (
-    <div className="mb-6 p-4 bg-white shadow rounded-xl">
-      <Line options={options} data={chartData} />
+    <div style={cardStyle} className={className}>
+      <div style={{ flex: 1, position: "relative" }}>
+        <Line options={options} data={chartData} />
+      </div>
     </div>
   );
 }

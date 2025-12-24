@@ -1,8 +1,17 @@
 export default function InsightBox({ text }) {
+  const boxStyle = {
+    background: "#eff6ff", // Light blue tint
+    borderRadius: "var(--radius-lg)",
+    padding: "1.5rem",
+    marginBottom: "2rem",
+    border: "1px solid #dbeafe",
+    color: "#1e3a8a",
+  };
+
   return (
-    <div className="p-4 mb-4 bg-blue-100 rounded-xl shadow-md">
-      <h2 className="font-semibold">AI Summary</h2>
-      <p className="text-gray-700">{text}</p>
+    <div style={boxStyle}>
+      <h2 style={{ fontWeight: 600, marginBottom: "0.5rem" }}>AI Summary</h2>
+      <p style={{ lineHeight: 1.6 }}>{text}</p>
     </div>
   );
 }
