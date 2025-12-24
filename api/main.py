@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import pandas as pd
 import os
 
-app = FastAPI()
+app = FastAPI(root_path="/api")
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "live_data.csv")
 
