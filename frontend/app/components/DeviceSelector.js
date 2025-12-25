@@ -1,5 +1,6 @@
 export default function DeviceSelector({ devices, selectedDevice, onSelect }) {
-    if (!devices || devices.length === 0) return null;
+    // Always render to avoid UI "popping" or confusing the user
+    const hasDevices = devices && devices.length > 0;
 
     const containerStyle = {
         marginBottom: "1.5rem",
@@ -23,7 +24,9 @@ export default function DeviceSelector({ devices, selectedDevice, onSelect }) {
         fontSize: "0.875rem",
         lineHeight: "1.25rem",
         outline: "none",
-        minWidth: "200px"
+        minWidth: "200px",
+        cursor: hasDevices ? "pointer" : "not-allowed",
+        opacity: hasDevices ? 1 : 0.7
     };
 
     return (
@@ -36,12 +39,17 @@ export default function DeviceSelector({ devices, selectedDevice, onSelect }) {
                 value={selectedDevice}
                 onChange={(e) => onSelect(e.target.value)}
                 style={selectStyle}
+                disabled={!hasDevices}
             >
-                {devices.map((device) => (
-                    <option key={device} value={device}>
-                        {device}
-                    </option>
-                ))}
+                {hasDevices ? (
+                    devices.map((device) => (
+                        <option key={device} value={device}>
+                            {device}
+                        </option>
+                    ))
+                ) : (
+                    <option>Waiting for data...</option>
+                )}
             </select>
         </div>
     );

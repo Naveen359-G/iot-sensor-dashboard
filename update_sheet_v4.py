@@ -191,6 +191,10 @@ filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
 if "Device_ID" not in filtered_df.columns:
     raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
 
+# Save the MASTER file (for API/Dashboard consumption)
+filtered_df.to_csv("live_data.csv", index=False)
+print(f"✅ Saved master live_data.csv ({len(filtered_df)} records)")
+
 device_groups = filtered_df.groupby("Device_ID")
 summary_rows = []
 markdown_device_sections = []

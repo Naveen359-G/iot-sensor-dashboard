@@ -6,6 +6,7 @@ import InsightBox from "./components/InsightBox";
 import DeviceSelector from "./components/DeviceSelector";
 import DateRangeSelector from "./components/DateRangeSelector";
 import UpdateStatus from "./components/UpdateStatus";
+import ZoomModal from "./components/ZoomModal";
 
 export default function Home() {
   const [data, setData] = useState([]);
@@ -13,6 +14,7 @@ export default function Home() {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState("");
   const [days, setDays] = useState(null); // null = All Time
+  const [zoomedChart, setZoomedChart] = useState(null); // { title: string, data: [] }
 
   // 1. Fetch Devices on Mount
   useEffect(() => {
@@ -64,15 +66,9 @@ export default function Home() {
     fetchData();
   }, [selectedDevice, days]);
 
-  // Extract labels (timestamps) and latest update time
-  const labels = data.map(d => {
-    // Attempt to parse short time
-    if (!d.Timestamp) return "";
-    const date = new Date(d.Timestamp.split("/").reverse().join("-")); // DD/MM/YYYY -> YYYY-MM-DD for parse if needed?
-    // Actually the API sends what is in CSV. If CSV is 28/09/2025 05:36:18, we can just show Time or parse it properly.
-    // Let's assume text for now or simple parse.
-    return d.Timestamp.split(" ")[1] || d.Timestamp; // Show time part
-  });
+  // Extract labels (timestamps) 
+  // Pass FULL string so Zoom/Tooltip can show date. ChartCard will slice it for axis.
+  const labels = data.map(d => d.Timestamp || "");
 
   const lastUpdated = data.length > 0 ? data[data.length - 1].Timestamp : null;
   // Note: We need a valid Date object for UpdateStatus. 
@@ -127,26 +123,35 @@ export default function Home() {
         </div>
       </div>
 
-      <InsightBox text={`Viewing real-time data for ${selectedDevice || "all devices"}.`} />
+      <InsightBox text={`Viewing real-time data for ${selectedDevice || "all devices"}. Click any chart to zoom.`} />
 
       {data.length > 0 && (
         <div className="card-grid">
           {/* Row 1 */}
-          {temp && <ChartCard title={temp.title} data={temp.series} labels={labels} />}
-          {humidity && <ChartCard title={humidity.title} data={humidity.series} labels={labels} />}
+          {temp && <ChartCard title={temp.title} data={temp.series} labels={labels} onClick={() => setZoomedChart(temp)} />}
+          {humidity && <ChartCard title={humidity.title} data={humidity.series} labels={labels} onClick={() => setZoomedChart(humidity)} />}
 
           {/* Row 2 */}
-          {light && <ChartCard title={light.title} data={light.series} labels={labels} />}
-          {aqi && <ChartCard title={aqi.title} data={aqi.series} labels={labels} />}
+          {light && <ChartCard title={light.title} data={light.series} labels={labels} onClick={() => setZoomedChart(light)} />}
+          {aqi && <ChartCard title={aqi.title} data={aqi.series} labels={labels} onClick={() => setZoomedChart(aqi)} />}
 
           {/* Row 3 - Full Width for Heap/Health */}
-          {heap && <ChartCard className="full-width" title={heap.title} data={heap.series} labels={labels} />}
+          {heap && <ChartCard className="full-width" title={heap.title} data={heap.series} labels={labels} onClick={() => setZoomedChart(heap)} />}
         </div>
       )}
 
       {data.length === 0 && (
-        <p className="text-gray-500">No data available for this device.</p>
+        <p className="text-gray-500">No data available for this device (Check Date Filter).</p>
       )}
+
+      {/* Zoom Modal */}
+      <ZoomModal
+        isOpen={!!zoomedChart}
+        onClose={() => setZoomedChart(null)}
+        title={zoomedChart?.title}
+        data={zoomedChart?.series}
+        labels={labels}
+      />
     </main>
   );
 }

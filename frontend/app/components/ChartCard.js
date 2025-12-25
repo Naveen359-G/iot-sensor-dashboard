@@ -20,7 +20,7 @@ ChartJS.register(
   Legend
 );
 
-export default function ChartCard({ title, data, labels, className }) {
+export default function ChartCard({ title, data, labels, className, onClick }) {
   // Get latest value
   const latestValue = data.length > 0 ? data[data.length - 1] : "N/A";
 
@@ -33,7 +33,7 @@ export default function ChartCard({ title, data, labels, className }) {
   else if (t.includes("aqi")) unit = "";
 
   const chartData = {
-    // If exact timestamps passed, use them. Else 1..N
+    // Labels are now full datetime strings "DD/MM/YYYY HH:MM:SS"
     labels: labels || data.map((_, i) => i + 1),
     datasets: [
       {
@@ -42,7 +42,7 @@ export default function ChartCard({ title, data, labels, className }) {
         borderColor: "rgb(59, 130, 246)",
         backgroundColor: "rgba(59, 130, 246, 0.1)",
         borderWidth: 2,
-        pointRadius: 2,
+        pointRadius: 2, // Small points in mini view
         tension: 0.4,
         fill: true,
       },
@@ -58,14 +58,32 @@ export default function ChartCard({ title, data, labels, className }) {
       tooltip: {
         mode: 'index',
         intersect: false,
+        callbacks: {
+          // Show value with unit
+          label: (context) => `${context.parsed.y}${unit}`
+        }
       }
     },
     scales: {
       x: {
         display: true, // Show X Axis
-        tickets: {
+        ticks: {
           maxTicksLimit: 6,
           maxRotation: 0,
+          callback: function (val, index) {
+            // val is index, getLabelForValue gives the string
+            const label = this.getLabelForValue(val);
+            // Extract just the time "HH:MM" from "DD/MM/YYYY HH:MM:SS"
+            try {
+              // Split by space -> ["DD/MM/YYYY", "HH:MM:SS"]
+              // Take "HH:MM"
+              const timePart = label.split(" ")[1];
+              if (timePart) return timePart.substring(0, 5);
+              return label;
+            } catch (e) {
+              return label;
+            }
+          }
         },
         grid: { display: false }
       },
@@ -80,6 +98,12 @@ export default function ChartCard({ title, data, labels, className }) {
           font: { size: 10 }
         }
       }
+    },
+    // optimizations
+    interaction: {
+      mode: 'nearest',
+      axis: 'x',
+      intersect: false
     }
   };
 
@@ -89,10 +113,15 @@ export default function ChartCard({ title, data, labels, className }) {
     boxShadow: "var(--shadow-md)",
     padding: "1.5rem",
     border: "1px solid var(--border-color)",
-    height: "350px", // Increased height for header
+    height: "350px",
     display: "flex",
-    flexDirection: "column"
+    flexDirection: "column",
+    cursor: onClick ? "pointer" : "default", // Show pointer
+    transition: "transform 0.2s", // Subtle hover effect
   };
+
+  // Add hover effect via simplified inline style? React specific
+  // We'll rely on the cursor for now.
 
   const headerStyle = {
     marginBottom: "1rem",
@@ -114,7 +143,7 @@ export default function ChartCard({ title, data, labels, className }) {
   };
 
   return (
-    <div style={cardStyle} className={className}>
+    <div style={cardStyle} className={className} onClick={onClick}>
       <div style={headerStyle}>
         <div style={titleStyle}>{title}</div>
         <div style={valueStyle}>
