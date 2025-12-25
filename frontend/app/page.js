@@ -5,6 +5,7 @@ import ChartCard from "./components/ChartCard";
 import InsightBox from "./components/InsightBox";
 import DeviceSelector from "./components/DeviceSelector";
 import DateRangeSelector from "./components/DateRangeSelector";
+import UpdateStatus from "./components/UpdateStatus";
 
 export default function Home() {
   const [data, setData] = useState([]);
@@ -63,6 +64,29 @@ export default function Home() {
     fetchData();
   }, [selectedDevice, days]);
 
+  // Extract labels (timestamps) and latest update time
+  const labels = data.map(d => {
+    // Attempt to parse short time
+    if (!d.Timestamp) return "";
+    const date = new Date(d.Timestamp.split("/").reverse().join("-")); // DD/MM/YYYY -> YYYY-MM-DD for parse if needed?
+    // Actually the API sends what is in CSV. If CSV is 28/09/2025 05:36:18, we can just show Time or parse it properly.
+    // Let's assume text for now or simple parse.
+    return d.Timestamp.split(" ")[1] || d.Timestamp; // Show time part
+  });
+
+  const lastUpdated = data.length > 0 ? data[data.length - 1].Timestamp : null;
+  // Note: We need a valid Date object for UpdateStatus. 
+  // If format is DD/MM/YYYY HH:MM:SS, JS Date constructor might fail in some browsers.
+  // Ideally backend should send ISO. But let's try to parse or just current time if fail.
+  let validLastUpdated = null;
+  if (lastUpdated) {
+    const parts = lastUpdated.split(/[\s/:]/); // simple split
+    // parts: [28, 09, 2025, 05, 36, 18]
+    if (parts.length >= 6) {
+      validLastUpdated = new Date(parts[2], parts[1] - 1, parts[0], parts[3], parts[4], parts[5]);
+    }
+  }
+
   // Helper to get data series for a specific metric
   const getDataFor = (keyword) => {
     const colName = columns.find(c => c.toLowerCase().includes(keyword.toLowerCase()));
@@ -85,7 +109,10 @@ export default function Home() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
         <div>
           <h1 className="text-3xl font-bold">🌡️ IoT Sensor Live Dashboard</h1>
-          <p className="text-gray-500 mt-1">Real-time environmental monitoring</p>
+          <div className="flex items-center gap-4 mt-2">
+            <p className="text-gray-500">Real-time environmental monitoring</p>
+            {validLastUpdated && <UpdateStatus lastUpdated={validLastUpdated} />}
+          </div>
         </div>
         <div className="flex flex-col items-end gap-2 mt-4 md:mt-0">
           <DeviceSelector
@@ -105,15 +132,15 @@ export default function Home() {
       {data.length > 0 && (
         <div className="card-grid">
           {/* Row 1 */}
-          {temp && <ChartCard title={temp.title} data={temp.series} />}
-          {humidity && <ChartCard title={humidity.title} data={humidity.series} />}
+          {temp && <ChartCard title={temp.title} data={temp.series} labels={labels} />}
+          {humidity && <ChartCard title={humidity.title} data={humidity.series} labels={labels} />}
 
           {/* Row 2 */}
-          {light && <ChartCard title={light.title} data={light.series} />}
-          {aqi && <ChartCard title={aqi.title} data={aqi.series} />}
+          {light && <ChartCard title={light.title} data={light.series} labels={labels} />}
+          {aqi && <ChartCard title={aqi.title} data={aqi.series} labels={labels} />}
 
           {/* Row 3 - Full Width for Heap/Health */}
-          {heap && <ChartCard className="full-width" title={heap.title} data={heap.series} />}
+          {heap && <ChartCard className="full-width" title={heap.title} data={heap.series} labels={labels} />}
         </div>
       )}
 
@@ -123,4 +150,3 @@ export default function Home() {
     </main>
   );
 }
-
