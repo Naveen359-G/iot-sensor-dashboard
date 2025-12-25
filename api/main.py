@@ -39,6 +39,9 @@ def get_df():
             if response.status == 200:
                 content = response.read().decode('utf-8')
                 df = pd.read_csv(StringIO(content))
+                # Ensure we only keep the last 1000 records
+                if len(df) > 1000:
+                    df = df.tail(1000)
                 # Add a marker for the frontend
                 df["_source"] = "GitHub (Live)"
                 return df
@@ -47,6 +50,8 @@ def get_df():
     
     if os.path.exists(DATA_PATH):
         df = pd.read_csv(DATA_PATH)
+        if len(df) > 1000:
+            df = df.tail(1000)
         df["_source"] = "Local (Stale Fallback)"
         return df
     return None
