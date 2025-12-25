@@ -184,6 +184,14 @@ if "Timestamp" in filtered_df.columns:
 
 filtered_df["Last_Updated_UTC"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
+print(f"📊 DATA DIAGNOSTIC:")
+print(f"   - Total rows fetched: {len(df)}")
+print(f"   - Rows after filtering (START_ROW={START_ROW}): {len(filtered_df)}")
+if not filtered_df.empty and "Device_ID" in filtered_df.columns:
+    print(f"   - Devices found: {filtered_df['Device_ID'].unique()}")
+if not filtered_df.empty and "Timestamp" in filtered_df.columns:
+    print(f"   - Latest Timestamp in data: {filtered_df['Timestamp'].iloc[0]}")
+
 def compute_alert_row(r):
     return generate_alert_text(r.get("Temperature_°C"), r.get("AQI_Value"))
 
@@ -195,6 +203,27 @@ if "Device_ID" not in filtered_df.columns:
 # Clean up Device_ID (remove rows that are empty or N/A)
 filtered_df = filtered_df.dropna(subset=["Device_ID"])
 filtered_df = filtered_df[filtered_df["Device_ID"].astype(str).str.lower() != "n/a"]
+
+# --- 90-DAY RETENTION POLICY ---
+if "Timestamp" in filtered_df.columns:
+    try:
+        # Try DD/MM/YYYY first (common for these sensors)
+        temp_dt = pd.to_datetime(filtered_df["Timestamp"], dayfirst=True, errors="coerce")
+        # If too many NaT, try without dayfirst
+        if temp_dt.isna().sum() > len(temp_dt) * 0.5:
+            temp_dt = pd.to_datetime(filtered_df["Timestamp"], dayfirst=False, errors="coerce")
+        
+        filtered_df["_dt"] = temp_dt
+        cutoff_date = datetime.now() - timedelta(days=90)
+        
+        # Filter: Keep only last 90 days
+        initial_count = len(filtered_df)
+        filtered_df = filtered_df[filtered_df["_dt"] >= cutoff_date].copy()
+        print(f"🧹 Retention: Removed {initial_count - len(filtered_df)} records older than 90 days.")
+        
+        filtered_df.drop(columns=["_dt"], inplace=True)
+    except Exception as e:
+        print(f"⚠️ Retention filter failed (parsing error): {e}")
 
 # Save the MASTER file (for API/Dashboard consumption)
 filtered_df.to_csv("live_data.csv", index=False)

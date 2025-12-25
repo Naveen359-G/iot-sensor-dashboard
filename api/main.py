@@ -41,7 +41,8 @@ def get_devices():
         # Find any column that looks like Device ID
         device_col = next((c for c in df.columns if "device" in c.lower()), None)
         if device_col:
-            return {"devices": [str(d) for d in df[device_col].dropna().unique()]}
+            return {"devices": sorted([str(d).strip() for d in df[device_col].dropna().unique()])}
+
     except Exception:
         pass
     return {"devices": []}
@@ -71,7 +72,8 @@ def get_json(device_id: str = Query(None), days: int = Query(None)):
     if device_id:
         device_col = next((c for c in df.columns if "device" in c.lower()), None)
         if device_col:
-            df = df[df[device_col].astype(str) == str(device_id)]
+            df = df[df[device_col].astype(str).str.strip() == str(device_id).strip()]
+
 
 
 

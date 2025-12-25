@@ -1,13 +1,19 @@
 export default function UpdateStatus({ lastUpdated }) {
     if (!lastUpdated) return null;
 
-    // Calculate Next Update (Last + 45 mins)
+    // Calculate Next Update (Last + 15 mins)
     const lastDate = new Date(lastUpdated);
-    const nextDate = new Date(lastDate.getTime() + 45 * 60000);
+    const nextDate = new Date(lastDate.getTime() + 15 * 60000);
 
     const formatTime = (d) => {
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
+
+    const formatDate = (d) => {
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+
+    const isToday = new Date().toDateString() === lastDate.toDateString();
 
     const containerStyle = {
         display: "flex",
@@ -32,10 +38,10 @@ export default function UpdateStatus({ lastUpdated }) {
         <div style={containerStyle}>
             <div style={itemStyle}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10b981" }}></span>
-                <span>Last Updated: <strong>{formatTime(lastDate)}</strong></span>
+                <span>Last Sensor Data: <strong>{isToday ? formatTime(lastDate) : `${formatDate(lastDate)} ${formatTime(lastDate)}`}</strong></span>
             </div>
             <div style={itemStyle}>
-                <span>Next Update: <strong>{formatTime(nextDate)}</strong></span>
+                <span>Next Fetch: <strong>{formatTime(nextDate)}</strong></span>
             </div>
         </div>
     );
