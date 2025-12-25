@@ -24,36 +24,72 @@ for p in POSSIBLE_PATHS:
 if not DATA_PATH:
     DATA_PATH = "live_data.csv"
 
-# GitHub Live Data URL (Hardcoded fallback for reliability)
+# GitHub Repository for fallbacks
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY") or "Naveen359-G/iot-sensor-dashboard"
 
+# Google Sheets Live Export URL
+SHEET_ID = "1EZXrkYyfK-QTrLAlf9-mSelOcmbFCaxzPWYaHHcZbdE"
+SHEET_NAME = "Week 39/52"
+GS_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME.replace(' ', '%20')}"
+
+def clean_df(df, is_live_sheet=False):
+    """Normalize column names and filter data based on Kaggle/Project requirements."""
+    # 1. Row filtering (Skip first 71 rows from live sheet as per Kaggle logic)
+    if is_live_sheet and len(df) > 71:
+        df = df.iloc[71:].reset_index(drop=True)
+    
+    # 2. Normalize column names
+    df.columns = [str(c).strip().replace(' ', '_').replace('(', '').replace(')', '').replace('°C', 'C') for c in df.columns]
+    
+    # 3. Drop unwanted columns (eCO2/CO2 versions)
+    cols_to_drop = [col for col in df.columns if any(x in col for x in ['eCO', 'CO2', 'eCO\u2082'])]
+    df = df.drop(columns=cols_to_drop, errors='ignore')
+    
+    # 4. Limit to latest 1000 records
+    if len(df) > 1000:
+        df = df.tail(1000)
+    
+    return df
+
 def get_df():
-    """Fetch DataFrame from GitHub Raw if possible, otherwise local file."""
+    """Fetch DataFrame: Google Sheets (Primary) -> GitHub Raw (Fallback) -> Local (Emergency)."""
+    # 1. Try Google Sheets Direct
+    try:
+        req = urllib.request.Request(GS_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status == 200:
+                content = response.read().decode('utf-8')
+                df = pd.read_csv(StringIO(content))
+                df = clean_df(df, is_live_sheet=True)
+                df["_source"] = "Google Sheets (Live)"
+                return df
+    except Exception as e:
+        print(f"⚠️ Google Sheets fetch failed: {e}")
+
+    # 2. Try GitHub Raw Fallback
     timestamp = int(datetime.now().timestamp() // 60)
     live_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_data.csv?v={timestamp}"
-    
     try:
-        # Use a Request with User-Agent to bypass potential blocks
         req = urllib.request.Request(live_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
                 content = response.read().decode('utf-8')
                 df = pd.read_csv(StringIO(content))
-                # Ensure we only keep the last 1000 records
-                if len(df) > 1000:
-                    df = df.tail(1000)
-                # Add a marker for the frontend
-                df["_source"] = "GitHub (Live)"
+                df = clean_df(df, is_live_sheet=False)
+                df["_source"] = "GitHub (Live Fallback)"
                 return df
     except Exception as e:
         print(f"⚠️ GitHub Raw fetch failed: {e}")
     
+    # 3. Try Local Emergency Fallback
     if os.path.exists(DATA_PATH):
-        df = pd.read_csv(DATA_PATH)
-        if len(df) > 1000:
-            df = df.tail(1000)
-        df["_source"] = "Local (Stale Fallback)"
-        return df
+        try:
+            df = pd.read_csv(DATA_PATH)
+            df = clean_df(df, is_live_sheet=False)
+            df["_source"] = "Local (Emergency Fallback)"
+            return df
+        except Exception:
+            pass
     return None
 
 @app.get("/")
