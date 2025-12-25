@@ -165,19 +165,20 @@ def send_telegram_alert(message):
 # ========================
 try:
     doc = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
-    # Attempt to use hardcoded SHEET_NAME, otherwise fall back to the LATEST tab
     try:
         sheet = doc.worksheet(SHEET_NAME)
         current_tab_name = SHEET_NAME
     except Exception:
-        sheet = doc.worksheets()[-1] # Take the absolute last tab (likely newest)
+        sheet = doc.worksheets()[-1] 
         current_tab_name = sheet.title
 
     print(f"📁 Opening sheet: '{current_tab_name}'")
+    # Fetch all values
     all_values = sheet.get_all_values()
 except Exception as e:
     print(f"❌ Error accessing Google Sheet: {e}")
     exit(1)
+
 
 if not all_values:
     print("⚠️ Sheet is empty!")
@@ -186,16 +187,25 @@ if not all_values:
 # Identify headers (Row 1)
 headers = all_values[0]
 
-# Take the LATEST 1000 records to ensure we get Dec 25 data
-# 500 might be too small if sensors are very noisy
+# Filter out empty rows (where all data columns are empty)
+# This prevents taking "empty rows" from the bottom of a large sheet
+all_values = [r for r in all_values if any(cell.strip() for cell in r)]
+
+# Take the LATEST 1000 records (plus the header)
 MAX_HISTORY = 1000
 if len(all_values) > MAX_HISTORY:
-    rows = [headers] + all_values[-(MAX_HISTORY-1):]
+    # We want header + the last 999 records if total is > 1000
+    # Actually, user wants "last 1000 readings", so header + last 1000 rows
+    rows = [headers] + all_values[-1000:] if all_values[0] != headers else [headers] + all_values[-1001:]
+    # Simplest: keep header, then take last 1000 of the DATA rows
+    data_rows = all_values[1:]
+    rows = [headers] + data_rows[-1000:]
 else:
     rows = all_values
 
 df = pd.DataFrame(rows[1:], columns=headers)
-print(f"📥 Fetched {len(df)} rows from tab '{current_tab_name}'.")
+print(f"📥 Fetched {len(df)} non-empty rows from tab '{current_tab_name}'.")
+
 
 
 # ========================

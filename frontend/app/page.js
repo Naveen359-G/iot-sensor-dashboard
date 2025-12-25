@@ -111,7 +111,7 @@ export default function Home() {
             {data.length > 0 && (
               <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                {data[0]._source || "Synced"}
+                {data[0]._source || "GITHUB (LIVE)"}
               </div>
             )}
           </div>
