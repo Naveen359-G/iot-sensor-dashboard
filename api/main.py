@@ -24,24 +24,29 @@ for p in POSSIBLE_PATHS:
 if not DATA_PATH:
     DATA_PATH = "live_data.csv"
 
-# GitHub Live Data URL
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
-GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_data.csv" if GITHUB_REPO else None
+# GitHub Live Data URL (Hardcoded fallback for reliability)
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY") or "Naveen359-G/iot-sensor-dashboard"
 
 def get_df():
     """Fetch DataFrame from GitHub Raw if possible, otherwise local file."""
-    if GITHUB_RAW_URL:
-        try:
-            with urllib.request.urlopen(GITHUB_RAW_URL, timeout=5) as response:
-                if response.status == 200:
-                    content = response.read().decode('utf-8')
-                    return pd.read_csv(StringIO(content))
-        except Exception:
-            pass
+    # Add a cache-busting query parameter (?v=) to ensure we get newest data from GitHub CDN
+    timestamp = int(datetime.now().timestamp() // 60) # updates every minute
+    live_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_data.csv?v={timestamp}"
+    
+    try:
+        with urllib.request.urlopen(live_url, timeout=5) as response:
+            if response.status == 200:
+                content = response.read().decode('utf-8')
+                df = pd.read_csv(StringIO(content))
+                print(f"✅ Fetched live data from GitHub: {len(df)} rows")
+                return df
+    except Exception as e:
+        print(f"⚠️ GitHub Raw fetch failed, falling back to local: {e}")
     
     if os.path.exists(DATA_PATH):
         return pd.read_csv(DATA_PATH)
     return None
+
 
 @app.get("/")
 def root():

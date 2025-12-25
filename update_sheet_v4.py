@@ -161,25 +161,49 @@ def send_telegram_alert(message):
         print(f"⚠️ Telegram alert failed: {e}")
 
 # ========================
-# LOAD SHEET DATA
+# LOAD SHEET DATA (Bottom-Up Fetch)
 # ========================
 sheet = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"]).worksheet(SHEET_NAME)
-rows = sheet.get_all_records()
-df = pd.DataFrame(rows)
+# Fetch all values to identify the bottom of the sheet
+all_values = sheet.get_all_values()
+
+if not all_values:
+    print("⚠️ Sheet is empty!")
+    exit(0)
+
+# Identify headers (Row 1 in Google Sheets = index 0)
+headers = all_values[0]
+
+# Take the LATEST 500 records (plus the header) to ensure we get Dec 25 data
+# This is much more reliable than starting from Row 72
+MAX_HISTORY = 500
+if len(all_values) > MAX_HISTORY:
+    # Header + last 500 rows
+    rows = [headers] + all_values[-(MAX_HISTORY-1):]
+else:
+    rows = all_values
+
+df = pd.DataFrame(rows[1:], columns=headers)
+print(f"📥 Fetched {len(df)} recent rows from Google Sheets.")
 
 # ========================
 # NORMALIZE COLUMN NAMES
 # ========================
+# Strip spaces and standardize for internal logic
 df.columns = [c.strip().replace(" ", "_").replace("(", "").replace(")", "") for c in df.columns]
+
 
 # ========================
 # CLEAN & FILTER
 # ========================
-filtered_df = df.iloc[START_ROW - 2:].copy()
-if REMOVE_COLUMN.replace(" ", "_").replace("(", "").replace(")", "") in filtered_df.columns:
-    filtered_df.drop(columns=[REMOVE_COLUMN.replace(" ", "_").replace("(", "").replace(")", "")], inplace=True)
+filtered_df = df.copy()
+# Remove unwanted specific columns if they exist
+norm_remove = REMOVE_COLUMN.replace(" ", "_").replace("(", "").replace(")", "")
+if norm_remove in filtered_df.columns:
+    filtered_df.drop(columns=[norm_remove], inplace=True)
 
 if "Timestamp" in filtered_df.columns:
+    # Ensure they are sorted newest first for the dashboard
     filtered_df = filtered_df.sort_values(by="Timestamp", ascending=False).reset_index(drop=True)
 
 filtered_df["Last_Updated_UTC"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -203,41 +227,37 @@ def compute_alert_row(r):
 
 filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
 
-if "Device_ID" not in filtered_df.columns:
-    raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
+# Find device column dynamically
+device_col = next((c for c in filtered_df.columns if "device" in c.lower()), "Device_ID")
 
-# Clean up Device_ID (remove rows that are empty, N/A, or purely whitespace)
-filtered_df["Device_ID"] = filtered_df["Device_ID"].astype(str).str.strip()
-filtered_df = filtered_df[filtered_df["Device_ID"].notna() & (filtered_df["Device_ID"] != "") & (filtered_df["Device_ID"].str.lower() != "nan") & (filtered_df["Device_ID"].str.lower() != "n/a")]
+if device_col not in filtered_df.columns:
+    print(f"⚠️ Warning: Could not find a device column in {list(filtered_df.columns)}. Using 'Device_ID' fallback.")
+    if "Device_ID" not in filtered_df.columns:
+        raise RuntimeError("No device column found.")
 
+# Clean up device values
+filtered_df[device_col] = filtered_df[device_col].astype(str).str.strip()
+filtered_df = filtered_df[filtered_df[device_col].notna() & (filtered_df[device_col] != "") & (filtered_df[device_col].str.lower() != "nan") & (filtered_df[device_col].str.lower() != "n/a")]
 
 # --- 90-DAY RETENTION POLICY ---
+# (Keeping it enabled since we fixed the parsing)
 if "Timestamp" in filtered_df.columns:
     try:
-        # Try DD/MM/YYYY first (common for these sensors)
         temp_dt = pd.to_datetime(filtered_df["Timestamp"], dayfirst=True, errors="coerce")
-        # If too many NaT, try without dayfirst
         if temp_dt.isna().sum() > len(temp_dt) * 0.5:
             temp_dt = pd.to_datetime(filtered_df["Timestamp"], dayfirst=False, errors="coerce")
-        
         filtered_df["_dt"] = temp_dt
         cutoff_date = datetime.now() - timedelta(days=90)
-        
-        # Filter: Keep only last 90 days
-        initial_count = len(filtered_df)
         filtered_df = filtered_df[filtered_df["_dt"] >= cutoff_date].copy()
-        print(f"🧹 Retention: Removed {initial_count - len(filtered_df)} records older than 90 days.")
-        
         filtered_df.drop(columns=["_dt"], inplace=True)
     except Exception as e:
-        print(f"⚠️ Retention filter failed (parsing error): {e}")
+        print(f"⚠️ Retention filter failed: {e}")
 
 # Save the MASTER file (for API/Dashboard consumption)
 filtered_df.to_csv("live_data.csv", index=False)
 print(f"✅ Saved master live_data.csv ({len(filtered_df)} records)")
 
-
-device_groups = filtered_df.groupby("Device_ID")
+device_groups = filtered_df.groupby(device_col)
 summary_rows = []
 markdown_device_sections = []
 
