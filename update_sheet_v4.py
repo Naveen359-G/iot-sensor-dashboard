@@ -185,12 +185,18 @@ if "Timestamp" in filtered_df.columns:
 filtered_df["Last_Updated_UTC"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 print(f"📊 DATA DIAGNOSTIC:")
+print(f"   - Raw Columns: {list(df.columns)}")
 print(f"   - Total rows fetched: {len(df)}")
 print(f"   - Rows after filtering (START_ROW={START_ROW}): {len(filtered_df)}")
-if not filtered_df.empty and "Device_ID" in filtered_df.columns:
-    print(f"   - Devices found: {filtered_df['Device_ID'].unique()}")
+print(f"   - Normalized Columns: {list(filtered_df.columns)}")
+if not filtered_df.empty:
+    device_col = next((c for c in filtered_df.columns if "device" in c.lower()), None)
+    if device_col:
+        print(f"   - Device column found: '{device_col}'")
+        print(f"   - Unique Devices: {filtered_df[device_col].unique()}")
 if not filtered_df.empty and "Timestamp" in filtered_df.columns:
-    print(f"   - Latest Timestamp in data: {filtered_df['Timestamp'].iloc[0]}")
+    print(f"   - Latest Timestamp: {filtered_df['Timestamp'].iloc[0]}")
+
 
 def compute_alert_row(r):
     return generate_alert_text(r.get("Temperature_°C"), r.get("AQI_Value"))

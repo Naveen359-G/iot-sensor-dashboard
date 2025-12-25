@@ -68,11 +68,15 @@ def get_json(device_id: str = Query(None), days: int = Query(None)):
         return JSONResponse([])
     df = pd.read_csv(DATA_PATH)
     
-    # Filter by Device (Robust search)
+    # Filter by Device (Extreme Robust search)
     if device_id:
         device_col = next((c for c in df.columns if "device" in c.lower()), None)
         if device_col:
-            df = df[df[device_col].astype(str).str.strip() == str(device_id).strip()]
+            # Normalize target ID for comparison: lowercase + dash/underscore agnostic
+            target = str(device_id).lower().replace("_", "-").strip()
+            # Apply same normalization to data column
+            df = df[df[device_col].astype(str).str.lower().str.replace("_", "-").str.strip() == target]
+
 
 
 
