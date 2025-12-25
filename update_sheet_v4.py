@@ -191,15 +191,15 @@ filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
 if "Device_ID" not in filtered_df.columns:
     raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
 
-# --- 90-DAY RETENTION POLICY ---
-if "Timestamp" in filtered_df.columns:
-    # Convert to datetime for filtering
-    filtered_df["_dt"] = pd.to_datetime(filtered_df["Timestamp"], dayfirst=True, errors="coerce")
-    cutoff_date = datetime.now() - timedelta(days=90)
-    # Keep only data from last 90 days
-    filtered_df = filtered_df[filtered_df["_dt"] >= cutoff_date]
-    # Drop helper column
-    filtered_df.drop(columns=["_dt"], inplace=True)
+# --- 90-DAY RETENTION POLICY (DISABLED FOR DEBUGGING) ---
+# if "Timestamp" in filtered_df.columns:
+#     # Convert to datetime for filtering
+#     filtered_df["_dt"] = pd.to_datetime(filtered_df["Timestamp"], dayfirst=True, errors="coerce")
+#     cutoff_date = datetime.now() - timedelta(days=90)
+#     # Keep only data from last 90 days
+#     filtered_df = filtered_df[filtered_df["_dt"] >= cutoff_date]
+#     # Drop helper column
+#     filtered_df.drop(columns=["_dt"], inplace=True)
 
 # Save the MASTER file (for API/Dashboard consumption)
 filtered_df.to_csv("live_data.csv", index=False)
