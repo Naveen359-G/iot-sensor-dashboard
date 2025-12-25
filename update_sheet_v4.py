@@ -14,6 +14,7 @@ Requirements:
 """
 
 import os
+import re
 import base64
 import json
 from datetime import datetime, timedelta
@@ -191,19 +192,14 @@ filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
 if "Device_ID" not in filtered_df.columns:
     raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
 
-# --- 90-DAY RETENTION POLICY (DISABLED FOR DEBUGGING) ---
-# if "Timestamp" in filtered_df.columns:
-#     # Convert to datetime for filtering
-#     filtered_df["_dt"] = pd.to_datetime(filtered_df["Timestamp"], dayfirst=True, errors="coerce")
-#     cutoff_date = datetime.now() - timedelta(days=90)
-#     # Keep only data from last 90 days
-#     filtered_df = filtered_df[filtered_df["_dt"] >= cutoff_date]
-#     # Drop helper column
-#     filtered_df.drop(columns=["_dt"], inplace=True)
+# Clean up Device_ID (remove rows that are empty or N/A)
+filtered_df = filtered_df.dropna(subset=["Device_ID"])
+filtered_df = filtered_df[filtered_df["Device_ID"].astype(str).str.lower() != "n/a"]
 
 # Save the MASTER file (for API/Dashboard consumption)
 filtered_df.to_csv("live_data.csv", index=False)
-print(f"✅ Saved master live_data.csv ({len(filtered_df)} records - Last 90 Days)")
+print(f"✅ Saved master live_data.csv ({len(filtered_df)} records)")
+
 
 device_groups = filtered_df.groupby("Device_ID")
 summary_rows = []
@@ -213,10 +209,13 @@ os.makedirs("assets_local", exist_ok=True)
 
 for device, device_df in device_groups:
     device_df = device_df.head(MAX_RECORDS).copy()
-
-    csv_name = f"live_data_{device}.csv"
+    
+    # Sanitize device name for filenames (replace slashes/spaces with underscores)
+    safe_device = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(device))
+    csv_name = f"live_data_{safe_device}.csv"
     device_df.to_csv(csv_name, index=False)
     print(f"✅ Saved {csv_name} ({len(device_df)} records)")
+
 
     latest = device_df.iloc[0]
     last_n = device_df.head(10)[["Temperature_°C", "AQI_Value"]].copy()[::-1]
