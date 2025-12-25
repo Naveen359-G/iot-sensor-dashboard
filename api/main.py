@@ -71,7 +71,7 @@ def get_json(device_id: str = Query(None), days: int = Query(None)):
         except Exception:
             pass # If parsing fails, ignore filter
             
-    return JSONResponse(df.tail(100).to_dict(orient="records"))
+    return JSONResponse(df.to_dict(orient="records"))
 
 @app.get("/data/columns")
 def get_columns():

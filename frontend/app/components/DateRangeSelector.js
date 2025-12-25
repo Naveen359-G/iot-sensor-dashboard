@@ -3,6 +3,7 @@ export default function DateRangeSelector({ selectedRange, onSelect }) {
         { label: "Last 24h", value: 1 },
         { label: "Last 7 Days", value: 7 },
         { label: "Last 30 Days", value: 30 },
+        { label: "Last 90 Days", value: 90 },
         { label: "All Time", value: null },
     ];
 
