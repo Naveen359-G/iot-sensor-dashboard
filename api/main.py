@@ -3,6 +3,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from datetime import datetime, timedelta
 import pandas as pd
 import os
+import urllib.request
+from io import StringIO
 
 app = FastAPI(root_path="/api")
 
@@ -10,7 +12,7 @@ app = FastAPI(root_path="/api")
 POSSIBLE_PATHS = [
     os.path.join(os.path.dirname(__file__), "..", "live_data.csv"),
     os.path.join(os.path.dirname(__file__), "live_data.csv"),
-    "/var/task/live_data.csv", # Common Vercel Lambda path
+    "/var/task/live_data.csv",
     "live_data.csv"
 ]
 
@@ -19,87 +21,89 @@ for p in POSSIBLE_PATHS:
     if os.path.exists(p):
         DATA_PATH = p
         break
-
 if not DATA_PATH:
-    # Fallback to relative if nothing found (will likely fail later but avoids crash here)
     DATA_PATH = "live_data.csv"
+
+# GitHub Live Data URL
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
+GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_data.csv" if GITHUB_REPO else None
+
+def get_df():
+    """Fetch DataFrame from GitHub Raw if possible, otherwise local file."""
+    if GITHUB_RAW_URL:
+        try:
+            with urllib.request.urlopen(GITHUB_RAW_URL, timeout=5) as response:
+                if response.status == 200:
+                    content = response.read().decode('utf-8')
+                    return pd.read_csv(StringIO(content))
+        except Exception:
+            pass
+    
+    if os.path.exists(DATA_PATH):
+        return pd.read_csv(DATA_PATH)
+    return None
 
 @app.get("/")
 def root():
-    return {"status": "API Online", "message": "IoT Dashboard Backend Active"}
+    return {"status": "API Online", "message": "IoT Dashboard Backend Active", "live_sync": GITHUB_RAW_URL is not None}
 
 @app.get("/data/csv")
 def get_csv():
+    # Still returns the deploy-time CSV for download
     return FileResponse(DATA_PATH, media_type="text/csv")
 
 @app.get("/devices")
 def get_devices():
-    if not os.path.exists(DATA_PATH):
+    df = get_df()
+    if df is None:
         return {"devices": []}
     try:
-        df = pd.read_csv(DATA_PATH)
-        # Find any column that looks like Device ID
         device_col = next((c for c in df.columns if "device" in c.lower()), None)
         if device_col:
             return {"devices": sorted([str(d).strip() for d in df[device_col].dropna().unique()])}
-
     except Exception:
         pass
     return {"devices": []}
 
 @app.get("/debug")
 def debug_info():
-    if not os.path.exists(DATA_PATH):
-        return {"error": "live_data.csv not found", "path": DATA_PATH}
-    try:
-        df = pd.read_csv(DATA_PATH)
-        return {
-            "file_size": os.path.getsize(DATA_PATH),
-            "rows": len(df),
-            "columns": list(df.columns),
-            "head": df.head(5).to_dict(orient="records") if not df.empty else "File is Empty"
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    df = get_df()
+    return {
+        "source": "GitHub Raw" if GITHUB_RAW_URL else "Local Filesystem",
+        "raw_url": GITHUB_RAW_URL,
+        "exists": df is not None,
+        "rows": len(df) if df is not None else 0,
+        "columns": list(df.columns) if df is not None else []
+    }
 
 @app.get("/data/json")
 def get_json(device_id: str = Query(None), days: int = Query(None)):
-    if not os.path.exists(DATA_PATH):
+    df = get_df()
+    if df is None:
         return JSONResponse([])
-    df = pd.read_csv(DATA_PATH)
     
-    # Filter by Device (Extreme Robust search)
+    # Filter by Device (Extreme Robust)
     if device_id:
         device_col = next((c for c in df.columns if "device" in c.lower()), None)
         if device_col:
-            # Normalize target ID for comparison: lowercase + dash/underscore agnostic
             target = str(device_id).lower().replace("_", "-").strip()
-            # Apply same normalization to data column
             df = df[df[device_col].astype(str).str.lower().str.replace("_", "-").str.strip() == target]
 
-
-
-
-
-    # Filter by Date (Days)
+    # Filter by Date
     if days is not None and "Timestamp" in df.columns:
         try:
-            # Parse timestamp. Format in CSV is likely DD/MM/YYYY HH:MM:SS based on previous output
-            # "28/09/2025 05:36:18"
             df["dt"] = pd.to_datetime(df["Timestamp"], dayfirst=True, errors='coerce')
             cutoff_date = datetime.now() - timedelta(days=days)
-            df = df[df["dt"] >= cutoff_date]
-            # Drop the helper column if desired, but to_dict might handle it. 
-            # Better to drop it to keep response clean.
+            df = df[df["dt"] >= cutoff_date].copy()
             df = df.drop(columns=["dt"])
         except Exception:
-            pass # If parsing fails, ignore filter
+            pass
             
     return JSONResponse(df.to_dict(orient="records"))
 
 @app.get("/data/columns")
 def get_columns():
-    if not os.path.exists(DATA_PATH):
+    df = get_df()
+    if df is None:
         return {"columns": []}
-    df = pd.read_csv(DATA_PATH)
     return {"columns": list(df.columns)}

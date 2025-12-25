@@ -206,9 +206,10 @@ filtered_df["Alert_Status"] = filtered_df.apply(compute_alert_row, axis=1)
 if "Device_ID" not in filtered_df.columns:
     raise RuntimeError("Sheet does not contain 'Device_ID' column — cannot group per device.")
 
-# Clean up Device_ID (remove rows that are empty or N/A)
-filtered_df = filtered_df.dropna(subset=["Device_ID"])
-filtered_df = filtered_df[filtered_df["Device_ID"].astype(str).str.lower() != "n/a"]
+# Clean up Device_ID (remove rows that are empty, N/A, or purely whitespace)
+filtered_df["Device_ID"] = filtered_df["Device_ID"].astype(str).str.strip()
+filtered_df = filtered_df[filtered_df["Device_ID"].notna() & (filtered_df["Device_ID"] != "") & (filtered_df["Device_ID"].str.lower() != "nan") & (filtered_df["Device_ID"].str.lower() != "n/a")]
+
 
 # --- 90-DAY RETENTION POLICY ---
 if "Timestamp" in filtered_df.columns:
