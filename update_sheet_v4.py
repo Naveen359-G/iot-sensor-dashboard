@@ -28,7 +28,7 @@ import requests
 # ========================
 SERVICE_ACCOUNT_FILE = "service_account.json"   # path to Google service account file
 SHEET_NAME = "Week 39/52"
-START_ROW = 72
+START_ROW = 2
 REMOVE_COLUMN = "eCO₂ (ppm)"
 
 MAX_RECORDS = 200                 # limit per device

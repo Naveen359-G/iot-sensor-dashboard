@@ -36,14 +36,14 @@ def get_csv():
 def get_devices():
     if not os.path.exists(DATA_PATH):
         return {"devices": []}
-    df = pd.read_csv(DATA_PATH)
-    # Assuming 'Device_ID' is the column name after normalization or as is. 
-    # Based on previous file reads, it was 'Device ID' in CSV but likely 'Device_ID' after pandas read if not normalized manually here.
-    # Let's check the CSV header from previous steps: "Device ID"
-    # We should normalize/strip as done in the update script or just use the raw name.
-    # The API reads raw CSV.
-    if "Device ID" in df.columns:
-        return {"devices": list(df["Device ID"].unique())}
+    try:
+        df = pd.read_csv(DATA_PATH)
+        # Find any column that looks like Device ID
+        device_col = next((c for c in df.columns if "device" in c.lower()), None)
+        if device_col:
+            return {"devices": [str(d) for d in df[device_col].dropna().unique()]}
+    except Exception:
+        pass
     return {"devices": []}
 
 @app.get("/debug")
@@ -56,8 +56,7 @@ def debug_info():
             "file_size": os.path.getsize(DATA_PATH),
             "rows": len(df),
             "columns": list(df.columns),
-            "head": df.head(5).to_dict(orient="records"),
-            "sample_timestamp": df.iloc[0]["Timestamp"] if "Timestamp" in df.columns and not df.empty else "N/A"
+            "head": df.head(5).to_dict(orient="records") if not df.empty else "File is Empty"
         }
     except Exception as e:
         return {"error": str(e)}
@@ -68,12 +67,12 @@ def get_json(device_id: str = Query(None), days: int = Query(None)):
         return JSONResponse([])
     df = pd.read_csv(DATA_PATH)
     
-    # Filter by Device (Handle both space and underscore versions)
+    # Filter by Device (Robust search)
     if device_id:
-        if "Device_ID" in df.columns:
-            df = df[df["Device_ID"] == device_id]
-        elif "Device ID" in df.columns:
-            df = df[df["Device ID"] == device_id]
+        device_col = next((c for c in df.columns if "device" in c.lower()), None)
+        if device_col:
+            df = df[df[device_col].astype(str) == str(device_id)]
+
 
 
     # Filter by Date (Days)
