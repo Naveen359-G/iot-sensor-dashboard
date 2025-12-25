@@ -1,9 +1,9 @@
 export default function UpdateStatus({ lastUpdated }) {
     if (!lastUpdated) return null;
 
-    // Calculate Next Update (Last + 15 mins)
+    // Calculate Next Update (Last + 2 hours)
     const lastDate = new Date(lastUpdated);
-    const nextDate = new Date(lastDate.getTime() + 15 * 60000);
+    const nextDate = new Date(lastDate.getTime() + 120 * 60000);
 
     const formatTime = (d) => {
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
