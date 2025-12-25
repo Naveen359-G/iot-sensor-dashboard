@@ -161,30 +161,42 @@ def send_telegram_alert(message):
         print(f"⚠️ Telegram alert failed: {e}")
 
 # ========================
-# LOAD SHEET DATA (Bottom-Up Fetch)
+# LOAD SHEET DATA (Dynamic Latest Tab)
 # ========================
-sheet = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"]).worksheet(SHEET_NAME)
-# Fetch all values to identify the bottom of the sheet
-all_values = sheet.get_all_values()
+try:
+    doc = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
+    # Attempt to use hardcoded SHEET_NAME, otherwise fall back to the LATEST tab
+    try:
+        sheet = doc.worksheet(SHEET_NAME)
+        current_tab_name = SHEET_NAME
+    except Exception:
+        sheet = doc.worksheets()[-1] # Take the absolute last tab (likely newest)
+        current_tab_name = sheet.title
+
+    print(f"📁 Opening sheet: '{current_tab_name}'")
+    all_values = sheet.get_all_values()
+except Exception as e:
+    print(f"❌ Error accessing Google Sheet: {e}")
+    exit(1)
 
 if not all_values:
     print("⚠️ Sheet is empty!")
     exit(0)
 
-# Identify headers (Row 1 in Google Sheets = index 0)
+# Identify headers (Row 1)
 headers = all_values[0]
 
-# Take the LATEST 500 records (plus the header) to ensure we get Dec 25 data
-# This is much more reliable than starting from Row 72
-MAX_HISTORY = 500
+# Take the LATEST 1000 records to ensure we get Dec 25 data
+# 500 might be too small if sensors are very noisy
+MAX_HISTORY = 1000
 if len(all_values) > MAX_HISTORY:
-    # Header + last 500 rows
     rows = [headers] + all_values[-(MAX_HISTORY-1):]
 else:
     rows = all_values
 
 df = pd.DataFrame(rows[1:], columns=headers)
-print(f"📥 Fetched {len(df)} recent rows from Google Sheets.")
+print(f"📥 Fetched {len(df)} rows from tab '{current_tab_name}'.")
+
 
 # ========================
 # NORMALIZE COLUMN NAMES
@@ -203,8 +215,22 @@ if norm_remove in filtered_df.columns:
     filtered_df.drop(columns=[norm_remove], inplace=True)
 
 if "Timestamp" in filtered_df.columns:
-    # Ensure they are sorted newest first for the dashboard
-    filtered_df = filtered_df.sort_values(by="Timestamp", ascending=False).reset_index(drop=True)
+    # Robust conversion for sorting
+    try:
+        temp_dt = pd.to_datetime(filtered_df["Timestamp"], dayfirst=True, errors="coerce")
+        if temp_dt.isna().sum() > len(temp_dt) * 0.5:
+            temp_dt = pd.to_datetime(filtered_df["Timestamp"], dayfirst=False, errors="coerce")
+        filtered_df["_dt_sort"] = temp_dt
+        filtered_df = filtered_df.sort_values(by="_dt_sort", ascending=False).reset_index(drop=True)
+        filtered_df.drop(columns=["_dt_sort"], inplace=True)
+    except Exception:
+        # Fallback to string sort if all else fails
+        filtered_df = filtered_df.sort_values(by="Timestamp", ascending=False).reset_index(drop=True)
+
+print(f"📊 DATA DISCOVERY:")
+if not filtered_df.empty:
+    print(f"   - Most Recent Record: {filtered_df['Timestamp'].iloc[0]} (Device: {filtered_df[device_col].iloc[0] if 'device_col' in locals() else 'Unknown'})")
+
 
 filtered_df["Last_Updated_UTC"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 

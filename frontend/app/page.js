@@ -108,6 +108,12 @@ export default function Home() {
           <div className="flex items-center gap-4 mt-2">
             <p className="text-gray-500">Real-time environmental monitoring</p>
             {validLastUpdated && <UpdateStatus lastUpdated={validLastUpdated} />}
+            {data.length > 0 && (
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                {data[0]._source || "Synced"}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 mt-4 md:mt-0">

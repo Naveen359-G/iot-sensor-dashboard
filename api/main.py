@@ -29,28 +29,34 @@ GITHUB_REPO = os.getenv("GITHUB_REPOSITORY") or "Naveen359-G/iot-sensor-dashboar
 
 def get_df():
     """Fetch DataFrame from GitHub Raw if possible, otherwise local file."""
-    # Add a cache-busting query parameter (?v=) to ensure we get newest data from GitHub CDN
-    timestamp = int(datetime.now().timestamp() // 60) # updates every minute
+    timestamp = int(datetime.now().timestamp() // 60)
     live_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_data.csv?v={timestamp}"
     
     try:
-        with urllib.request.urlopen(live_url, timeout=5) as response:
+        # Use a Request with User-Agent to bypass potential blocks
+        req = urllib.request.Request(live_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
                 content = response.read().decode('utf-8')
                 df = pd.read_csv(StringIO(content))
-                print(f"✅ Fetched live data from GitHub: {len(df)} rows")
+                # Add a marker for the frontend
+                df["_source"] = "GitHub (Live)"
                 return df
     except Exception as e:
-        print(f"⚠️ GitHub Raw fetch failed, falling back to local: {e}")
+        print(f"⚠️ GitHub Raw fetch failed: {e}")
     
     if os.path.exists(DATA_PATH):
-        return pd.read_csv(DATA_PATH)
+        df = pd.read_csv(DATA_PATH)
+        df["_source"] = "Local (Stale Fallback)"
+        return df
     return None
-
 
 @app.get("/")
 def root():
-    return {"status": "API Online", "message": "IoT Dashboard Backend Active", "live_sync": GITHUB_RAW_URL is not None}
+    df = get_df()
+    source = df["_source"].iloc[0] if df is not None and "_source" in df.columns else "Unknown"
+    return {"status": "API Online", "source": source, "repo": GITHUB_REPO}
+
 
 @app.get("/data/csv")
 def get_csv():
@@ -73,13 +79,15 @@ def get_devices():
 @app.get("/debug")
 def debug_info():
     df = get_df()
+    source = df["_source"].iloc[0] if df is not None and "_source" in df.columns else "None (Fetch Failed)"
     return {
-        "source": "GitHub Raw" if GITHUB_RAW_URL else "Local Filesystem",
-        "raw_url": GITHUB_RAW_URL,
-        "exists": df is not None,
+        "status": "API Online",
+        "data_source": source,
+        "repo": GITHUB_REPO,
         "rows": len(df) if df is not None else 0,
         "columns": list(df.columns) if df is not None else []
     }
+
 
 @app.get("/data/json")
 def get_json(device_id: str = Query(None), days: int = Query(None)):
