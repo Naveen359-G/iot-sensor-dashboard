@@ -46,16 +46,35 @@ def get_devices():
         return {"devices": list(df["Device ID"].unique())}
     return {"devices": []}
 
+@app.get("/debug")
+def debug_info():
+    if not os.path.exists(DATA_PATH):
+        return {"error": "live_data.csv not found", "path": DATA_PATH}
+    try:
+        df = pd.read_csv(DATA_PATH)
+        return {
+            "file_size": os.path.getsize(DATA_PATH),
+            "rows": len(df),
+            "columns": list(df.columns),
+            "head": df.head(5).to_dict(orient="records"),
+            "sample_timestamp": df.iloc[0]["Timestamp"] if "Timestamp" in df.columns and not df.empty else "N/A"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/data/json")
 def get_json(device_id: str = Query(None), days: int = Query(None)):
     if not os.path.exists(DATA_PATH):
         return JSONResponse([])
     df = pd.read_csv(DATA_PATH)
     
-    # Filter by Device
+    # Filter by Device (Handle both space and underscore versions)
     if device_id:
-        if "Device ID" in df.columns:
+        if "Device_ID" in df.columns:
+            df = df[df["Device_ID"] == device_id]
+        elif "Device ID" in df.columns:
             df = df[df["Device ID"] == device_id]
+
 
     # Filter by Date (Days)
     if days is not None and "Timestamp" in df.columns:
