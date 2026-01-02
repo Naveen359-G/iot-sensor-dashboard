@@ -2,7 +2,7 @@ name: Update live_data.csv from Google Sheets
 
 on:
   schedule:
-    - cron: "0 */2 * * *"  # Runs every 2 hours
+    - cron: "1 * * * *"  # Runs every 2 hours
   workflow_dispatch:      # allows manual trigger
 
 permissions:
